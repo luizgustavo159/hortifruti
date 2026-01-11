@@ -2,10 +2,12 @@ version: "3.9"
 services:
   db:
     image: postgres:16
+    env_file:
+      - .env
     environment:
       POSTGRES_DB: greenstore
       POSTGRES_USER: greenstore
-      POSTGRES_PASSWORD: "Gr&&n$t0r&@@@@@"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - db-data:/var/lib/postgresql/data
   app:
@@ -17,7 +19,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgres://greenstore:Gr&&n$t0r&%40%40%40%40%40@db:5432/greenstore
+      DATABASE_URL: ${DATABASE_URL}
     command: ["sh", "-c", "npm run migrate && npm start"]
 
 volumes:

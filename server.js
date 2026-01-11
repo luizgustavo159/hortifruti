@@ -394,6 +394,21 @@ app.get("/api/metrics", authenticateToken, requireAdmin, (req, res) => {
   );
 });
 
+app.get("/api/alerts", authenticateToken, requireAdmin, (req, res) => {
+  const limit = Number(req.query.limit || 50);
+  const safeLimit = Number.isNaN(limit) ? 50 : Math.min(Math.max(limit, 1), 200);
+  db.all(
+    "SELECT * FROM alerts ORDER BY created_at DESC LIMIT ?",
+    [safeLimit],
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao buscar alertas." });
+      }
+      return res.json(rows);
+    }
+  );
+});
+
 app.post(
   "/api/auth/register",
   [
@@ -1249,48 +1264,68 @@ app.post(
       if (nextStock < 0) {
         return res.status(400).json({ message: "Estoque insuficiente para ajuste." });
       }
-      runWithTransaction((tx, finish) => {
-        tx.run(
-          "UPDATE products SET current_stock = ? WHERE id = ?",
-          [nextStock, product.id],
-          (updateErr) => {
-            if (updateErr) {
-              finish(updateErr);
-              return;
-            }
+      const adjustmentValue = Math.abs(Number(delta)) * Number(product.price || 0);
+      return getSettings(["max_stock_adjust"], (settings) => {
+        const maxStockAdjust = Number(settings.max_stock_adjust || 0);
+        const requiresApproval = maxStockAdjust > 0 && adjustmentValue > maxStockAdjust;
+        const approvalToken = req.headers["x-approval-token"];
+
+        const proceed = (approval) => {
+          runWithTransaction((tx, finish) => {
             tx.run(
-              "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
-              [product.id, "adjust", delta, reason, req.user.id],
-              (movementErr) => {
-                if (movementErr) {
-                  finish(movementErr);
+              "UPDATE products SET current_stock = ? WHERE id = ?",
+              [nextStock, product.id],
+              (updateErr) => {
+                if (updateErr) {
+                  finish(updateErr);
                   return;
                 }
                 tx.run(
-                  "INSERT INTO audit_logs (action, details, performed_by, approved_by) VALUES (?, ?, ?, ?)",
-                  [
-                    "stock_adjust",
-                    JSON.stringify({ product_id: product.id, product_name: product.name, delta, reason }),
-                    req.user.id,
-                    null,
-                  ],
-                  (auditErr) => {
-                    if (auditErr) {
-                      finish(auditErr);
+                  "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
+                  [product.id, "adjust", delta, reason, req.user.id],
+                  (movementErr) => {
+                    if (movementErr) {
+                      finish(movementErr);
                       return;
                     }
-                    finish(null);
+                    tx.run(
+                      "INSERT INTO audit_logs (action, details, performed_by, approved_by) VALUES (?, ?, ?, ?)",
+                      [
+                        "stock_adjust",
+                        JSON.stringify({ product_id: product.id, product_name: product.name, delta, reason }),
+                        req.user.id,
+                        approval?.approved_by || null,
+                      ],
+                      (auditErr) => {
+                        if (auditErr) {
+                          finish(auditErr);
+                          return;
+                        }
+                        finish(null);
+                      }
+                    );
                   }
                 );
               }
             );
-          }
-        );
-      }, (transactionErr) => {
-        if (transactionErr) {
-          return res.status(500).json({ message: "Erro ao ajustar estoque." });
+          }, (transactionErr) => {
+            if (transactionErr) {
+              return res.status(500).json({ message: "Erro ao ajustar estoque." });
+            }
+            return res.json({ id: product.id, current_stock: nextStock });
+          });
+        };
+
+        if (requiresApproval) {
+          return verifyApprovalToken(approvalToken, "stock_adjust", (error, approval) => {
+            if (error) {
+              return res.status(error.status).json({ message: error.message });
+            }
+            return proceed(approval);
+          });
         }
-        return res.json({ id: product.id, current_stock: nextStock });
+
+        return proceed(null);
       });
     });
   }
