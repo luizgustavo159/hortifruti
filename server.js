@@ -8,9 +8,11 @@ const rateLimit = require("express-rate-limit");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
-const morgan = require("morgan");
+const pino = require("pino");
+const pinoHttp = require("pino-http");
+const nodemailer = require("nodemailer");
 const { body, validationResult } = require("express-validator");
-const sqlite3 = require("sqlite3").verbose();
+const db = require("./db");
 
 const app = express();
 const requestMetrics = {
@@ -21,11 +23,21 @@ const requestMetrics = {
 
 const PORT = process.env.PORT || 3000;
 let JWT_SECRET = process.env.JWT_SECRET || "";
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, "data", "greenstore.db");
 const NODE_ENV = process.env.NODE_ENV || "development";
 const LOG_LEVEL = process.env.LOG_LEVEL || "info";
 const ADMIN_BOOTSTRAP_TOKEN = process.env.ADMIN_BOOTSTRAP_TOKEN || "";
 const PASSWORD_RESET_TTL_MINUTES = Number(process.env.PASSWORD_RESET_TTL_MINUTES || 30);
+const ALERT_SLOW_THRESHOLD_MS = Number(process.env.ALERT_SLOW_THRESHOLD_MS || 2000);
+const METRICS_ENABLED = process.env.METRICS_ENABLED !== "false";
+const PASSWORD_RESET_URL = process.env.PASSWORD_RESET_URL || "";
+const RESET_EMAIL_FROM = process.env.RESET_EMAIL_FROM || "";
+const SMTP_HOST = process.env.SMTP_HOST || "";
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_SECURE = process.env.SMTP_SECURE === "true";
+const SMTP_USER = process.env.SMTP_USER || "";
+const SMTP_PASS = process.env.SMTP_PASS || "";
+const RESET_SMS_WEBHOOK_URL = process.env.RESET_SMS_WEBHOOK_URL || "";
+const ALERT_WEBHOOK_URL = process.env.ALERT_WEBHOOK_URL || "";
 
 if (!JWT_SECRET) {
   if (NODE_ENV === "development") {
@@ -43,13 +55,6 @@ if (NODE_ENV !== "development" && process.env.CORS_ORIGIN === "*") {
   throw new Error("CORS_ORIGIN não pode ser '*' fora de desenvolvimento.");
 }
 
-const db = new sqlite3.Database(DB_PATH);
-db.serialize(() => {
-  db.run("PRAGMA foreign_keys = ON");
-  db.run("PRAGMA journal_mode = WAL");
-  db.run("PRAGMA synchronous = NORMAL");
-});
-
 app.use(helmet());
 const allowedOrigins = (process.env.CORS_ORIGIN || "")
   .split(",")
@@ -63,22 +68,63 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 app.use(express.json({ limit: "1mb" }));
+const logger = pino({ level: LOG_LEVEL });
+app.use(
+  pinoHttp({
+    logger,
+    genReqId: () => crypto.randomUUID(),
+  })
+);
 app.use((req, res, next) => {
-  req.requestId = crypto.randomUUID();
+  req.requestId = req.id;
   res.setHeader("x-request-id", req.requestId);
   next();
 });
-if (LOG_LEVEL !== "silent") {
-  app.use(
-    morgan(":method :url :status :res[content-length] - :response-time ms", {
-      skip: () => LOG_LEVEL === "error",
-    })
-  );
-}
 app.use((req, res, next) => {
   requestMetrics.total += 1;
   const key = `${req.method} ${req.path}`;
   requestMetrics.byRoute[key] = (requestMetrics.byRoute[key] || 0) + 1;
+  const start = process.hrtime.bigint();
+  res.on("finish", () => {
+    const durationMs = Number(process.hrtime.bigint() - start) / 1e6;
+    if (METRICS_ENABLED) {
+      db.run(
+        "INSERT INTO request_metrics (method, path, status, duration_ms) VALUES (?, ?, ?, ?)",
+        [req.method, req.path, res.statusCode, Math.round(durationMs)],
+        (err) => {
+          if (err) {
+            logger.error({ err }, "Erro ao persistir métrica.");
+          }
+        }
+      );
+    }
+    const isSlow = durationMs > ALERT_SLOW_THRESHOLD_MS;
+    const isError = res.statusCode >= 500;
+    if (isSlow || isError) {
+      const level = isError ? "error" : "warning";
+      const message = isError ? "Erro de API" : "Resposta lenta";
+      const context = {
+        method: req.method,
+        path: req.path,
+        status: res.statusCode,
+        duration_ms: Math.round(durationMs),
+        request_id: req.requestId,
+      };
+      db.run(
+        "INSERT INTO alerts (level, message, context) VALUES (?, ?, ?::jsonb)",
+        [level, message, JSON.stringify(context)],
+        (err) => {
+          if (err) {
+            logger.error({ err }, "Erro ao registrar alerta.");
+            return;
+          }
+          sendAlertNotification({ level, message, context }).catch((notifyErr) => {
+            logger.error({ err: notifyErr }, "Erro ao enviar alerta.");
+          });
+        }
+      );
+    }
+  });
   next();
 });
 app.use(express.static(path.join(__dirname, "public")));
@@ -142,40 +188,15 @@ const requireSupervisor = requireRole("supervisor");
 const hashToken = (token) => crypto.createHash("sha256").update(token).digest("hex");
 
 const runWithTransaction = (work, callback) => {
-  db.serialize(() => {
-    db.run("BEGIN IMMEDIATE", (beginErr) => {
-      if (beginErr) {
-        callback(beginErr);
-        return;
-      }
-      work((err) => {
-        if (err) {
-          db.run("ROLLBACK", () => callback(err));
-          return;
-        }
-        db.run("COMMIT", (commitErr) => {
-          if (commitErr) {
-            callback(commitErr);
-            return;
-          }
-          callback(null);
-        });
-      });
-    });
-  });
+  db.withTransaction((tx, finish) => {
+    work(tx, finish);
+  }, callback);
 };
 
 const logAudit = ({ action, details, performedBy, approvedBy }) => {
   db.run(
     "INSERT INTO audit_logs (action, details, performed_by, approved_by) VALUES (?, ?, ?, ?)",
     [action, details ? JSON.stringify(details) : null, performedBy, approvedBy]
-  );
-};
-
-const logStockMovement = ({ productId, type, delta, reason, performedBy }) => {
-  db.run(
-    "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
-    [productId, type, delta, reason || null, performedBy]
   );
 };
 
@@ -196,6 +217,79 @@ const getSettings = (keys, callback) => {
     }, {});
     callback(result);
   });
+};
+
+const emailTransport =
+  SMTP_HOST && RESET_EMAIL_FROM
+    ? nodemailer.createTransport({
+        host: SMTP_HOST,
+        port: SMTP_PORT,
+        secure: SMTP_SECURE,
+        auth: SMTP_USER ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
+      })
+    : null;
+
+const buildResetMessage = (token, expiresAt) => {
+  const resetLink = PASSWORD_RESET_URL ? `${PASSWORD_RESET_URL}?token=${token}` : null;
+  const details = [
+    "Você solicitou a redefinição de senha.",
+    resetLink ? `Link: ${resetLink}` : `Token: ${token}`,
+    `Expira em: ${expiresAt}`,
+  ];
+  return details.join("\n");
+};
+
+const sendPasswordResetNotification = async ({ user, token, expiresAt }) => {
+  const payload = buildResetMessage(token, expiresAt);
+  let sent = false;
+  if (emailTransport && user.email) {
+    await emailTransport.sendMail({
+      from: RESET_EMAIL_FROM,
+      to: user.email,
+      subject: "Redefinição de senha",
+      text: payload,
+    });
+    sent = true;
+  }
+  if (RESET_SMS_WEBHOOK_URL && user.phone) {
+    const response = await fetch(RESET_SMS_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phone: user.phone,
+        message: payload,
+        token,
+        expires_at: expiresAt,
+        reset_url: PASSWORD_RESET_URL || null,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error("Falha ao enviar SMS.");
+    }
+    sent = true;
+  }
+  if (!sent) {
+    throw new Error("Nenhum canal de notificação configurado.");
+  }
+};
+
+const sendAlertNotification = async ({ level, message, context }) => {
+  if (!ALERT_WEBHOOK_URL) {
+    return;
+  }
+  const response = await fetch(ALERT_WEBHOOK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      level,
+      message,
+      context,
+      created_at: new Date().toISOString(),
+    }),
+  });
+  if (!response.ok) {
+    throw new Error("Falha ao enviar alerta.");
+  }
 };
 
 const parseDateRange = (req, res) => {
@@ -271,15 +365,33 @@ const requireApproval = (action) => (req, res, next) => {
 };
 
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", uptime: process.uptime() });
+  db.get("SELECT 1 AS ok", [], (err) => {
+    if (err) {
+      return res.status(500).json({ status: "error", db: "down", uptime: process.uptime() });
+    }
+    return res.json({ status: "ok", db: "ok", uptime: process.uptime() });
+  });
 });
 
 app.get("/api/metrics", authenticateToken, requireAdmin, (req, res) => {
-  res.json({
-    total_requests: requestMetrics.total,
-    by_route: requestMetrics.byRoute,
-    uptime_seconds: Math.floor((Date.now() - requestMetrics.startedAt) / 1000),
-  });
+  db.get(
+    `SELECT COUNT(*)::int AS total,
+            SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END)::int AS errors
+     FROM request_metrics
+     WHERE created_at >= NOW() - INTERVAL '24 hours'`,
+    [],
+    (err, row) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao buscar métricas." });
+      }
+      return res.json({
+        total_requests: requestMetrics.total,
+        by_route: requestMetrics.byRoute,
+        uptime_seconds: Math.floor((Date.now() - requestMetrics.startedAt) / 1000),
+        last_24h: row || { total: 0, errors: 0 },
+      });
+    }
+  );
 });
 
 app.post(
@@ -288,6 +400,10 @@ app.post(
     body("name").trim().notEmpty().withMessage("Nome é obrigatório."),
     body("email").isEmail().withMessage("Email inválido."),
     body("password").isLength({ min: 8 }).withMessage("Senha deve ter 8+ caracteres."),
+    body("phone")
+      .optional()
+      .matches(/^[0-9()+\-\s]{6,20}$/)
+      .withMessage("Telefone inválido."),
   ],
   (req, res) => {
     const errors = validationResult(req);
@@ -295,17 +411,17 @@ app.post(
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { name, email, password } = req.body;
+    const { name, email, password, phone = null } = req.body;
     const passwordHash = bcrypt.hashSync(password, 10);
 
-    db.run(
-      "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
-      [name, email, passwordHash],
-      function handleInsert(err) {
+    db.get(
+      "INSERT INTO users (name, email, phone, password_hash) VALUES (?, ?, ?, ?) RETURNING id",
+      [name, email, phone, passwordHash],
+      (err, row) => {
         if (err) {
           return res.status(400).json({ message: "Email já cadastrado." });
         }
-        return res.status(201).json({ id: this.lastID, name, email });
+        return res.status(201).json({ id: row.id, name, email, phone });
       }
     );
   }
@@ -317,6 +433,10 @@ app.post(
     body("name").trim().notEmpty().withMessage("Nome é obrigatório."),
     body("email").isEmail().withMessage("Email inválido."),
     body("password").isLength({ min: 8 }).withMessage("Senha deve ter 8+ caracteres."),
+    body("phone")
+      .optional()
+      .matches(/^[0-9()+\-\s]{6,20}$/)
+      .withMessage("Telefone inválido."),
   ],
   (req, res) => {
     if (!ADMIN_BOOTSTRAP_TOKEN) {
@@ -339,24 +459,24 @@ app.post(
         return res.status(409).json({ message: "Administrador já configurado." });
       }
 
-      const { name, email, password } = req.body;
+      const { name, email, password, phone = null } = req.body;
       const passwordHash = bcrypt.hashSync(password, 10);
       const permissions = ["admin", "logs", "relatorios", "descontos", "estoque", "caixa"];
 
-      db.run(
-        "INSERT INTO users (name, email, password_hash, role, permissions) VALUES (?, ?, ?, ?, ?)",
-        [name, email, passwordHash, "admin", JSON.stringify(permissions)],
-        function handleInsert(insertErr) {
+      db.get(
+        "INSERT INTO users (name, email, phone, password_hash, role, permissions) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+        [name, email, phone, passwordHash, "admin", JSON.stringify(permissions)],
+        (insertErr, row) => {
           if (insertErr) {
             return res.status(500).json({ message: "Erro ao criar administrador." });
           }
           logAudit({
             action: "admin_bootstrap",
-            details: { user_id: this.lastID, email },
-            performedBy: this.lastID,
-            approvedBy: this.lastID,
+            details: { user_id: row.id, email },
+            performedBy: row.id,
+            approvedBy: row.id,
           });
-          return res.status(201).json({ id: this.lastID });
+          return res.status(201).json({ id: row.id });
         }
       );
     });
@@ -390,9 +510,14 @@ app.post(
       return res.status(400).json({ errors: errors.array() });
     }
     const { email } = req.body;
-    db.get("SELECT id FROM users WHERE email = ?", [email], (err, user) => {
+    db.get("SELECT id, email, phone FROM users WHERE email = ?", [email], (err, user) => {
       if (err || !user) {
         return res.status(200).json({ status: "ok" });
+      }
+      const hasEmailChannel = Boolean(emailTransport && user.email);
+      const hasSmsChannel = Boolean(RESET_SMS_WEBHOOK_URL && user.phone);
+      if (!hasEmailChannel && !hasSmsChannel) {
+        return res.status(500).json({ message: "Canal de reset não configurado." });
       }
       const token = crypto.randomBytes(20).toString("hex");
       const tokenHash = hashToken(token);
@@ -406,12 +531,19 @@ app.post(
           if (insertErr) {
             return res.status(500).json({ message: "Erro ao criar reset." });
           }
-          logAudit({
-            action: "password_reset_requested",
-            details: { user_id: user.id },
-            performedBy: user.id,
-          });
-          return res.json({ token, expires_at: expiresAt });
+          sendPasswordResetNotification({ user, token, expiresAt })
+            .then(() => {
+              logAudit({
+                action: "password_reset_requested",
+                details: { user_id: user.id },
+                performedBy: user.id,
+              });
+              return res.json({ status: "ok" });
+            })
+            .catch((notifyErr) => {
+              logger.error({ err: notifyErr }, "Erro ao enviar reset de senha.");
+              return res.status(500).json({ message: "Erro ao enviar reset." });
+            });
         }
       );
     });
@@ -444,8 +576,8 @@ app.post(
         }
 
         const passwordHash = bcrypt.hashSync(password, 10);
-        runWithTransaction((finish) => {
-          db.run(
+        runWithTransaction((tx, finish) => {
+          tx.run(
             "UPDATE users SET password_hash = ? WHERE id = ?",
             [passwordHash, reset.user_id],
             (updateErr) => {
@@ -453,7 +585,7 @@ app.post(
                 finish(updateErr);
                 return;
               }
-              db.run(
+              tx.run(
                 "UPDATE password_resets SET used_at = CURRENT_TIMESTAMP WHERE id = ?",
                 [reset.id],
                 (resetErr) => {
@@ -461,7 +593,7 @@ app.post(
                     finish(resetErr);
                     return;
                   }
-                  db.run(
+                  tx.run(
                     "UPDATE sessions SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = ? AND revoked_at IS NULL",
                     [reset.user_id],
                     (revokeErr) => {
@@ -469,12 +601,22 @@ app.post(
                         finish(revokeErr);
                         return;
                       }
-                      logAudit({
-                        action: "password_reset_completed",
-                        details: { user_id: reset.user_id },
-                        performedBy: reset.user_id,
-                      });
-                      finish(null);
+                      tx.run(
+                        "INSERT INTO audit_logs (action, details, performed_by, approved_by) VALUES (?, ?, ?, ?)",
+                        [
+                          "password_reset_completed",
+                          JSON.stringify({ user_id: reset.user_id }),
+                          reset.user_id,
+                          null,
+                        ],
+                        (auditErr) => {
+                          if (auditErr) {
+                            finish(auditErr);
+                            return;
+                          }
+                          finish(null);
+                        }
+                      );
                     }
                   );
                 }
@@ -500,6 +642,10 @@ app.post(
     body("name").trim().notEmpty().withMessage("Nome é obrigatório."),
     body("email").isEmail().withMessage("Email inválido."),
     body("password").isLength({ min: 8 }).withMessage("Senha deve ter 8+ caracteres."),
+    body("phone")
+      .optional()
+      .matches(/^[0-9()+\-\s]{6,20}$/)
+      .withMessage("Telefone inválido."),
     body("role")
       .optional()
       .isIn(["admin", "manager", "supervisor", "operator"])
@@ -519,24 +665,27 @@ app.post(
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { name, email, password, role = "operator", permissions = [] } = req.body;
+    const { name, email, password, phone = null, role = "operator", permissions = [] } = req.body;
     const passwordHash = bcrypt.hashSync(password, 10);
 
-    db.run(
-      "INSERT INTO users (name, email, password_hash, role, permissions) VALUES (?, ?, ?, ?, ?)",
-      [name, email, passwordHash, role, JSON.stringify(permissions)],
-      function handleInsert(err) {
+    db.get(
+      "INSERT INTO users (name, email, phone, password_hash, role, permissions) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+      [name, email, phone, passwordHash, role, JSON.stringify(permissions)],
+      (err, row) => {
         if (err) {
           return res.status(400).json({ message: "Email já cadastrado." });
         }
-        return res.status(201).json({ id: this.lastID, name, email, role });
+        return res.status(201).json({ id: row.id, name, email, phone, role });
       }
     );
   }
 );
 
 app.get("/api/users", authenticateToken, requireAdmin, (req, res) => {
-  db.all("SELECT id, name, email, role, is_active, permissions, created_at FROM users", [], (err, rows) => {
+  db.all(
+    "SELECT id, name, email, phone, role, is_active, permissions, created_at FROM users",
+    [],
+    (err, rows) => {
     if (err) {
       return res.status(500).json({ message: "Erro ao listar usuários." });
     }
@@ -562,6 +711,10 @@ app.put(
   [
     body("name").optional().trim().notEmpty().withMessage("Nome é obrigatório."),
     body("email").optional().isEmail().withMessage("Email inválido."),
+    body("phone")
+      .optional()
+      .matches(/^[0-9()+\-\s]{6,20}$/)
+      .withMessage("Telefone inválido."),
     body("password")
       .optional()
       .isLength({ min: 8 })
@@ -600,6 +753,7 @@ app.put(
       const updated = {
         name: payload.name ?? user.name,
         email: payload.email ?? user.email,
+        phone: typeof payload.phone === "undefined" ? user.phone : payload.phone,
         role: payload.role ?? user.role,
         is_active:
           typeof payload.is_active === "undefined" ? user.is_active : payload.is_active ? 1 : 0,
@@ -617,10 +771,11 @@ app.put(
       const approvalToken = req.headers["x-approval-token"];
       const proceedUpdate = (approval) => {
         db.run(
-          "UPDATE users SET name = ?, email = ?, role = ?, is_active = ?, password_hash = ?, permissions = ? WHERE id = ?",
+          "UPDATE users SET name = ?, email = ?, phone = ?, role = ?, is_active = ?, password_hash = ?, permissions = ? WHERE id = ?",
           [
             updated.name,
             updated.email,
+            updated.phone,
             updated.role,
             updated.is_active,
             updated.password_hash,
@@ -634,6 +789,7 @@ app.put(
             const changes = {
               name: payload.name ? { from: user.name, to: updated.name } : undefined,
               email: payload.email ? { from: user.email, to: updated.email } : undefined,
+              phone: typeof payload.phone !== "undefined" ? { from: user.phone, to: updated.phone } : undefined,
               role: payload.role ? { from: user.role, to: updated.role } : undefined,
               is_active:
                 typeof payload.is_active !== "undefined"
@@ -768,11 +924,11 @@ app.post(
             [email, ip],
             () => {
               db.all(
-                `SELECT COUNT(*) as attempts
+                `SELECT COUNT(*)::int as attempts
                  FROM login_attempts
                  WHERE email = ?
-                 AND created_at >= datetime('now', ?)`,
-                [email, `-${lockMinutes} minutes`],
+                 AND created_at >= NOW() - ?::interval`,
+                [email, `${lockMinutes} minutes`],
                 (countErr, rows) => {
                   const attempts = countErr ? 0 : rows?.[0]?.attempts || 0;
                   if (attempts >= maxAttempts) {
@@ -830,14 +986,14 @@ app.post(
     }
 
     const { name, description = "" } = req.body;
-    db.run(
-      "INSERT INTO categories (name, description) VALUES (?, ?)",
+    db.get(
+      "INSERT INTO categories (name, description) VALUES (?, ?) RETURNING id",
       [name, description],
-      function handleInsert(err) {
+      (err, row) => {
         if (err) {
           return res.status(400).json({ message: "Categoria já cadastrada." });
         }
-        return res.status(201).json({ id: this.lastID });
+        return res.status(201).json({ id: row.id });
       }
     );
   }
@@ -870,14 +1026,14 @@ app.post(
       return res.status(400).json({ errors: errors.array() });
     }
     const { name, contact = "", phone = "", email = "" } = req.body;
-    db.run(
-      "INSERT INTO suppliers (name, contact, phone, email) VALUES (?, ?, ?, ?)",
+    db.get(
+      "INSERT INTO suppliers (name, contact, phone, email) VALUES (?, ?, ?, ?) RETURNING id",
       [name, contact, phone, email],
-      function handleInsert(err) {
+      (err, row) => {
         if (err) {
           return res.status(400).json({ message: "Fornecedor já cadastrado." });
         }
-        return res.status(201).json({ id: this.lastID });
+        return res.status(201).json({ id: row.id });
       }
     );
   }
@@ -941,7 +1097,7 @@ app.post(
 
     db.run(
       `INSERT INTO products (name, sku, unit_type, category_id, supplier_id, min_stock, max_stock, current_stock, price, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       [
         name,
         sku,
@@ -954,11 +1110,11 @@ app.post(
         price,
         expires_at,
       ],
-      function handleInsert(err) {
+      (err, result) => {
         if (err) {
           return res.status(400).json({ message: "Erro ao cadastrar produto." });
         }
-        return res.status(201).json({ id: this.lastID });
+        return res.status(201).json({ id: result.rows[0].id });
       }
     );
   }
@@ -996,9 +1152,9 @@ app.post(
 
         const proceed = (approval) => {
           let createdId = null;
-          runWithTransaction((finish) => {
+          runWithTransaction((tx, finish) => {
             const nextStock = product.current_stock - quantity;
-            db.run(
+            tx.run(
               "UPDATE products SET current_stock = ? WHERE id = ?",
               [nextStock, product_id],
               (updateErr) => {
@@ -1007,29 +1163,41 @@ app.post(
                   return;
                 }
 
-                db.run(
-                  "INSERT INTO stock_losses (product_id, quantity, reason) VALUES (?, ?, ?)",
+                tx.get(
+                  "INSERT INTO stock_losses (product_id, quantity, reason) VALUES (?, ?, ?) RETURNING id",
                   [product_id, quantity, reason],
-                  function handleLoss(lossErr) {
+                  (lossErr, row) => {
                     if (lossErr) {
                       finish(lossErr);
                       return;
                     }
-                    createdId = this.lastID;
-                    logStockMovement({
-                      productId: product_id,
-                      type: "loss",
-                      delta: -Number(quantity),
-                      reason,
-                      performedBy: req.user.id,
-                    });
-                    logAudit({
-                      action: "stock_loss",
-                      details: { product_id, quantity, reason, loss_value: lossValue },
-                      performedBy: req.user.id,
-                      approvedBy: approval?.approved_by,
-                    });
-                    finish(null);
+                    createdId = row.id;
+                    tx.run(
+                      "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
+                      [product_id, "loss", -Number(quantity), reason, req.user.id],
+                      (movementErr) => {
+                        if (movementErr) {
+                          finish(movementErr);
+                          return;
+                        }
+                        tx.run(
+                          "INSERT INTO audit_logs (action, details, performed_by, approved_by) VALUES (?, ?, ?, ?)",
+                          [
+                            "stock_loss",
+                            JSON.stringify({ product_id, quantity, reason, loss_value: lossValue }),
+                            req.user.id,
+                            approval?.approved_by || null,
+                          ],
+                          (auditErr) => {
+                            if (auditErr) {
+                              finish(auditErr);
+                              return;
+                            }
+                            finish(null);
+                          }
+                        );
+                      }
+                    );
                   }
                 );
               }
@@ -1081,8 +1249,8 @@ app.post(
       if (nextStock < 0) {
         return res.status(400).json({ message: "Estoque insuficiente para ajuste." });
       }
-      runWithTransaction((finish) => {
-        db.run(
+      runWithTransaction((tx, finish) => {
+        tx.run(
           "UPDATE products SET current_stock = ? WHERE id = ?",
           [nextStock, product.id],
           (updateErr) => {
@@ -1090,19 +1258,32 @@ app.post(
               finish(updateErr);
               return;
             }
-            logStockMovement({
-              productId: product.id,
-              type: "adjust",
-              delta,
-              reason,
-              performedBy: req.user.id,
-            });
-            logAudit({
-              action: "stock_adjust",
-              details: { product_id: product.id, product_name: product.name, delta, reason },
-              performedBy: req.user.id,
-            });
-            finish(null);
+            tx.run(
+              "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
+              [product.id, "adjust", delta, reason, req.user.id],
+              (movementErr) => {
+                if (movementErr) {
+                  finish(movementErr);
+                  return;
+                }
+                tx.run(
+                  "INSERT INTO audit_logs (action, details, performed_by, approved_by) VALUES (?, ?, ?, ?)",
+                  [
+                    "stock_adjust",
+                    JSON.stringify({ product_id: product.id, product_name: product.name, delta, reason }),
+                    req.user.id,
+                    null,
+                  ],
+                  (auditErr) => {
+                    if (auditErr) {
+                      finish(auditErr);
+                      return;
+                    }
+                    finish(null);
+                  }
+                );
+              }
+            );
           }
         );
       }, (transactionErr) => {
@@ -1140,8 +1321,8 @@ app.post(
       if (nextStock < 0) {
         return res.status(400).json({ message: "Estoque insuficiente." });
       }
-      runWithTransaction((finish) => {
-        db.run(
+      runWithTransaction((tx, finish) => {
+        tx.run(
           "UPDATE products SET current_stock = ? WHERE id = ?",
           [nextStock, product.id],
           (updateErr) => {
@@ -1149,19 +1330,32 @@ app.post(
               finish(updateErr);
               return;
             }
-            logStockMovement({
-              productId: product.id,
-              type,
-              delta,
-              reason,
-              performedBy: req.user.id,
-            });
-            logAudit({
-              action: type === "inbound" ? "stock_inbound" : "stock_outbound",
-              details: { product_id: product.id, product_name: product.name, delta, reason },
-              performedBy: req.user.id,
-            });
-            finish(null);
+            tx.run(
+              "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
+              [product.id, type, delta, reason, req.user.id],
+              (movementErr) => {
+                if (movementErr) {
+                  finish(movementErr);
+                  return;
+                }
+                tx.run(
+                  "INSERT INTO audit_logs (action, details, performed_by, approved_by) VALUES (?, ?, ?, ?)",
+                  [
+                    type === "inbound" ? "stock_inbound" : "stock_outbound",
+                    JSON.stringify({ product_id: product.id, product_name: product.name, delta, reason }),
+                    req.user.id,
+                    null,
+                  ],
+                  (auditErr) => {
+                    if (auditErr) {
+                      finish(auditErr);
+                      return;
+                    }
+                    finish(null);
+                  }
+                );
+              }
+            );
           }
         );
       }, (transactionErr) => {
@@ -1286,29 +1480,63 @@ app.post(
           return res.status(400).json({ message: "Produtos inválidos." });
         }
         const supplierId = rows[0].supplier_id || null;
-        db.run(
-          "INSERT INTO purchase_orders (supplier_id, created_by) VALUES (?, ?)",
-          [supplierId, req.user.id],
-          function handleOrder(err) {
-            if (err) {
-              return res.status(500).json({ message: "Erro ao criar pedido." });
+        let createdOrderId = null;
+        runWithTransaction((tx, finish) => {
+          tx.get(
+            "INSERT INTO purchase_orders (supplier_id, created_by) VALUES (?, ?) RETURNING id",
+            [supplierId, req.user.id],
+            (orderErr, row) => {
+              if (orderErr) {
+                finish(orderErr);
+                return;
+              }
+              const orderId = row.id;
+              createdOrderId = orderId;
+              let pending = items.length;
+              let failed = false;
+              items.forEach((item) => {
+                tx.run(
+                  "INSERT INTO purchase_order_items (order_id, product_id, quantity) VALUES (?, ?, ?)",
+                  [orderId, item.product_id, item.quantity],
+                  (itemErr) => {
+                    if (failed) {
+                      return;
+                    }
+                    if (itemErr) {
+                      failed = true;
+                      finish(itemErr);
+                      return;
+                    }
+                    pending -= 1;
+                    if (pending === 0) {
+                      tx.run(
+                        "INSERT INTO audit_logs (action, details, performed_by, approved_by) VALUES (?, ?, ?, ?)",
+                        [
+                          "purchase_order_created",
+                          JSON.stringify({ order_id: orderId, items }),
+                          req.user.id,
+                          null,
+                        ],
+                        (auditErr) => {
+                          if (auditErr) {
+                            finish(auditErr);
+                            return;
+                          }
+                          finish(null);
+                        }
+                      );
+                    }
+                  }
+                );
+              });
             }
-            const orderId = this.lastID;
-            const stmt = db.prepare(
-              "INSERT INTO purchase_order_items (order_id, product_id, quantity) VALUES (?, ?, ?)"
-            );
-            items.forEach((item) => {
-              stmt.run(orderId, item.product_id, item.quantity);
-            });
-            stmt.finalize();
-            logAudit({
-              action: "purchase_order_created",
-              details: { order_id: orderId, items },
-              performedBy: req.user.id,
-            });
-            return res.status(201).json({ id: orderId });
+          );
+        }, (transactionErr) => {
+          if (transactionErr) {
+            return res.status(500).json({ message: "Erro ao criar pedido." });
           }
-        );
+          return res.status(201).json({ id: createdOrderId });
+        });
       }
     );
   }
@@ -1373,7 +1601,7 @@ app.post(
           if (itemsErr || !items.length) {
             return res.status(500).json({ message: "Itens do pedido não encontrados." });
           }
-          runWithTransaction((finish) => {
+          runWithTransaction((tx, finish) => {
             let processed = 0;
             let completed = false;
             const finalize = (err) => {
@@ -1384,7 +1612,7 @@ app.post(
               finish(err);
             };
             const handleItem = (item) => {
-              db.get(
+              tx.get(
                 "SELECT * FROM products WHERE id = ?",
                 [item.product_id],
                 (productErr, product) => {
@@ -1393,7 +1621,7 @@ app.post(
                     return;
                   }
                   const nextStock = Number(product.current_stock) + Number(item.quantity);
-                  db.run(
+                  tx.run(
                     "UPDATE products SET current_stock = ? WHERE id = ?",
                     [nextStock, product.id],
                     (updateErr) => {
@@ -1401,32 +1629,51 @@ app.post(
                         finalize(updateErr);
                         return;
                       }
-                      logStockMovement({
-                        productId: product.id,
-                        type: "inbound",
-                        delta: Number(item.quantity),
-                        reason: `Recebimento pedido #${orderId}`,
-                        performedBy: req.user.id,
-                      });
-                      processed += 1;
-                      if (processed === items.length) {
-                        db.run(
-                          "UPDATE purchase_orders SET status = 'received', received_at = CURRENT_TIMESTAMP WHERE id = ?",
-                          [orderId],
-                          (orderErr) => {
-                            if (orderErr) {
-                              finalize(orderErr);
-                              return;
-                            }
-                            logAudit({
-                              action: "purchase_order_received",
-                              details: { order_id: orderId },
-                              performedBy: req.user.id,
-                            });
-                            finalize(null);
+                      tx.run(
+                        "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
+                        [
+                          product.id,
+                          "inbound",
+                          Number(item.quantity),
+                          `Recebimento pedido #${orderId}`,
+                          req.user.id,
+                        ],
+                        (movementErr) => {
+                          if (movementErr) {
+                            finalize(movementErr);
+                            return;
                           }
-                        );
-                      }
+                          processed += 1;
+                          if (processed === items.length) {
+                            tx.run(
+                              "UPDATE purchase_orders SET status = 'received', received_at = CURRENT_TIMESTAMP WHERE id = ?",
+                              [orderId],
+                              (orderErr) => {
+                                if (orderErr) {
+                                  finalize(orderErr);
+                                  return;
+                                }
+                                tx.run(
+                                  "INSERT INTO audit_logs (action, details, performed_by, approved_by) VALUES (?, ?, ?, ?)",
+                                  [
+                                    "purchase_order_received",
+                                    JSON.stringify({ order_id: orderId }),
+                                    req.user.id,
+                                    null,
+                                  ],
+                                  (auditErr) => {
+                                    if (auditErr) {
+                                      finalize(auditErr);
+                                      return;
+                                    }
+                                    finalize(null);
+                                  }
+                                );
+                              }
+                            );
+                          }
+                        }
+                      );
                     }
                   );
                 }
@@ -1510,7 +1757,7 @@ app.post(
         return res.status(403).json({ message: "Desconto acima do limite permitido." });
       }
 
-      db.run(
+      db.get(
         `INSERT INTO discounts (
           name,
           type,
@@ -1530,7 +1777,7 @@ app.post(
           priority,
           active
         )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         [
           name,
           type,
@@ -1550,16 +1797,16 @@ app.post(
           priority,
           active ? 1 : 0,
         ],
-        function handleInsert(err) {
+        (err, row) => {
           if (err) {
             return res.status(400).json({ message: "Erro ao cadastrar desconto." });
           }
           logAudit({
             action: "discount_created",
-            details: { id: this.lastID, name, type, value },
+            details: { id: row.id, name, type, value },
             performedBy: req.user.id,
           });
-          return res.status(201).json({ id: this.lastID });
+          return res.status(201).json({ id: row.id });
         }
       );
     });
@@ -1696,8 +1943,8 @@ app.post(
     let responsePayload = null;
     let responseStatus = 201;
 
-    runWithTransaction((finish) => {
-      db.get("SELECT * FROM products WHERE id = ?", [product_id], (err, product) => {
+    runWithTransaction((tx, finish) => {
+      tx.get("SELECT * FROM products WHERE id = ?", [product_id], (err, product) => {
         if (err) {
           finish(err);
           return;
@@ -1716,7 +1963,7 @@ app.post(
           const nextStock = product.current_stock - quantity;
           const finalTotal = Math.max(total - discountAmount, 0);
 
-          db.run(
+          tx.run(
             "UPDATE products SET current_stock = ? WHERE id = ?",
             [nextStock, product_id],
             (updateErr) => {
@@ -1725,9 +1972,9 @@ app.post(
                 return;
               }
 
-              db.run(
+              tx.get(
                 `INSERT INTO sales (product_id, quantity, total, discount_id, discount_amount, final_total, payment_method, sold_by)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
                 [
                   product_id,
                   quantity,
@@ -1738,25 +1985,28 @@ app.post(
                   payment_method,
                   req.user.id,
                 ],
-                function handleSale(saleErr) {
+                (saleErr, row) => {
                   if (saleErr) {
                     finish(saleErr);
                     return;
                   }
-                  logStockMovement({
-                    productId: product_id,
-                    type: "sale",
-                    delta: -Number(quantity),
-                    reason: "Venda PDV",
-                    performedBy: req.user.id,
-                  });
-                  responsePayload = {
-                    id: this.lastID,
-                    total,
-                    discount_amount: discountAmount,
-                    final_total: finalTotal,
-                  };
-                  finish(null);
+                  tx.run(
+                    "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
+                    [product_id, "sale", -Number(quantity), "Venda PDV", req.user.id],
+                    (movementErr) => {
+                      if (movementErr) {
+                        finish(movementErr);
+                        return;
+                      }
+                      responsePayload = {
+                        id: row.id,
+                        total,
+                        discount_amount: discountAmount,
+                        final_total: finalTotal,
+                      };
+                      finish(null);
+                    }
+                  );
                 }
               );
             }
@@ -1768,7 +2018,7 @@ app.post(
           return;
         }
 
-        db.get("SELECT * FROM discounts WHERE id = ? AND active = 1", [discount_id], (discountErr, discount) => {
+        tx.get("SELECT * FROM discounts WHERE id = ? AND active = 1", [discount_id], (discountErr, discount) => {
           if (discountErr) {
             finish(discountErr);
             return;
@@ -2143,14 +2393,14 @@ app.post(
 
     const { type, name, connection, config = "", active = 1 } = req.body;
 
-    db.run(
-      "INSERT INTO pos_devices (type, name, connection, config, active) VALUES (?, ?, ?, ?, ?)",
+    db.get(
+      "INSERT INTO pos_devices (type, name, connection, config, active) VALUES (?, ?, ?, ?, ?) RETURNING id",
       [type, name, connection, JSON.stringify(config), active ? 1 : 0],
-      function handleInsert(err) {
+      (err, row) => {
         if (err) {
           return res.status(400).json({ message: "Erro ao cadastrar dispositivo." });
         }
-        return res.status(201).json({ id: this.lastID });
+        return res.status(201).json({ id: row.id });
       }
     );
   }
