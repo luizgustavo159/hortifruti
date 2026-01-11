@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GreenStore | Estoque</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="css/styles.css" />
+  </head>
+  <body>
+    <header class="hero hero--compact">
+      <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container">
+          <a class="navbar-brand fw-bold" href="/">GreenStore</a>
+          <button
+            class="navbar-toggler"
+            type="button"
+            data-bs-toggle="collapse"
+            data-bs-target="#navbarNav"
+            aria-controls="navbarNav"
+            aria-expanded="false"
+            aria-label="Toggle navigation"
+          >
+            <span class="navbar-toggler-icon"></span>
+          </button>
+          <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav ms-auto">
+              <li class="nav-item"><a class="nav-link" href="/caixa.html">Caixa</a></li>
+              <li class="nav-item"><a class="nav-link" href="/estoque.html">Estoque</a></li>
+              <li class="nav-item"><a class="nav-link" href="/descontos.html">Descontos</a></li>
+              <li class="nav-item"><a class="nav-link" href="/admin/">Administração</a></li>
+              <li class="nav-item d-flex align-items-center">
+                <button class="btn btn-outline-light btn-sm ms-lg-2" id="logout-button" type="button">
+                  Sair
+                </button>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </nav>
+      <div class="container hero-content">
+        <h1 class="display-5 fw-bold">Estoque em tempo real</h1>
+        <p class="lead">
+          Acompanhe níveis críticos, validade e entradas/saídas do hortifruti.
+        </p>
+      </div>
+    </header>
+
+    <main class="section">
+      <div class="container">
+        <div class="row g-4 mb-4">
+          <div class="col-lg-4">
+            <div class="feature-card">
+              <h6 class="text-uppercase text-muted">Alertas críticos</h6>
+              <h3 class="mb-1" id="critical-count">0 itens</h3>
+              <p class="mb-0 text-muted">Itens abaixo do estoque mínimo.</p>
+            </div>
+          </div>
+          <div class="col-lg-4">
+            <div class="feature-card">
+              <h6 class="text-uppercase text-muted">Validade próxima</h6>
+              <h3 class="mb-1" id="expiry-count">0 itens</h3>
+              <p class="mb-0 text-muted">Produtos vencendo em até 7 dias.</p>
+            </div>
+          </div>
+          <div class="col-lg-4">
+            <div class="feature-card">
+              <h6 class="text-uppercase text-muted">Reposição sugerida</h6>
+              <h3 class="mb-1" id="restock-count">0 itens</h3>
+              <p class="mb-0 text-muted">Pedidos recomendados para fornecedores.</p>
+            </div>
+          </div>
+        </div>
+        <div class="row g-4 mb-4">
+          <div class="col-lg-6">
+            <div class="form-card">
+              <h5>Produtos vencendo</h5>
+              <div class="list-group list-group-flush" id="expiry-list"></div>
+            </div>
+          </div>
+          <div class="col-lg-6">
+            <div class="form-card">
+              <h5>Resumo de validade</h5>
+              <div class="list-group list-group-flush" id="expiry-summary">
+                <div class="list-group-item d-flex justify-content-between">
+                  <span>Itens vencendo em 7 dias</span>
+                  <strong id="expiry-7">0</strong>
+                </div>
+                <div class="list-group-item d-flex justify-content-between">
+                  <span>Itens vencendo em 15 dias</span>
+                  <strong id="expiry-15">0</strong>
+                </div>
+                <div class="list-group-item d-flex justify-content-between">
+                  <span>Itens vencendo em 30 dias</span>
+                  <strong id="expiry-30">0</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="row g-4">
+          <div class="col-lg-6">
+            <div class="form-card">
+              <h5>Cadastro rápido de produto</h5>
+              <form id="product-form">
+                <input class="form-control" id="product-name" placeholder="Nome do produto" required />
+                <input class="form-control" id="product-sku" placeholder="SKU" required />
+                <input class="form-control" id="product-category" placeholder="Categoria" required />
+                <select class="form-select" id="product-supplier">
+                  <option value="">Sem fornecedor</option>
+                </select>
+                <input class="form-control" id="product-unit" placeholder="Unidade (kg, un, caixa)" required />
+                <input class="form-control" id="product-price" placeholder="Preço (R$)" required />
+                <input class="form-control" id="product-expiry" type="date" />
+                <input class="form-control" id="product-stock" placeholder="Estoque inicial" required />
+                <input class="form-control" id="product-min" placeholder="Estoque mínimo" required />
+                <input class="form-control" id="product-max" placeholder="Estoque máximo" required />
+                <div class="alert alert-danger d-none" id="product-form-error"></div>
+                <button class="btn btn-success" type="submit">Salvar produto</button>
+              </form>
+              <hr />
+              <h6 class="fw-bold">Cadastrar fornecedor</h6>
+              <form id="supplier-form" class="d-grid gap-2">
+                <input class="form-control" id="supplier-name" placeholder="Nome do fornecedor" required />
+                <input class="form-control" id="supplier-contact" placeholder="Contato" />
+                <input class="form-control" id="supplier-phone" placeholder="Telefone" />
+                <input class="form-control" id="supplier-email" placeholder="Email" />
+                <button class="btn btn-outline-success" type="submit">Salvar fornecedor</button>
+              </form>
+            </div>
+          </div>
+          <div class="col-lg-6">
+            <div class="form-card">
+              <h5>Movimentação de estoque</h5>
+              <form id="stock-move-form">
+                <input
+                  class="form-control"
+                  id="stock-move-product"
+                  placeholder="Produto ou SKU"
+                  list="stock-products"
+                  required
+                />
+                <datalist id="stock-products"></datalist>
+                <input class="form-control" id="stock-move-quantity" placeholder="Quantidade" required />
+                <input class="form-control" id="stock-move-date" type="date" />
+                <select class="form-select" id="stock-move-type">
+                  <option>Entrada</option>
+                  <option>Saída</option>
+                  <option>Perda/estrago</option>
+                </select>
+                <input class="form-control d-none" id="loss-reason" placeholder="Motivo da perda" />
+                <button class="btn btn-success" type="submit">Registrar</button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <div class="row g-4 mt-2">
+          <div class="col-12">
+            <div class="form-card">
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                <h5 class="mb-0">Estoque atual</h5>
+                <div class="d-flex flex-wrap gap-2">
+                  <input class="form-control" id="stock-search" placeholder="Buscar produto" />
+                  <select class="form-select" id="stock-category">
+                    <option>Todas as categorias</option>
+                    <option>Frutas</option>
+                    <option>Verduras</option>
+                    <option>Legumes</option>
+                  </select>
+                  <select class="form-select" id="stock-status">
+                    <option>Status</option>
+                    <option>Crítico</option>
+                    <option>Ok</option>
+                    <option>Vencendo</option>
+                  </select>
+                  <select class="form-select" id="stock-sort">
+                    <option value="product-asc">Ordenar: Produto (A-Z)</option>
+                    <option value="product-desc">Ordenar: Produto (Z-A)</option>
+                    <option value="validity-asc">Validade (mais próxima)</option>
+                    <option value="validity-desc">Validade (mais distante)</option>
+                    <option value="status-asc">Status (A-Z)</option>
+                    <option value="status-desc">Status (Z-A)</option>
+                  </select>
+                  <select class="form-select" id="stock-page-size">
+                    <option value="10" selected>10 por página</option>
+                    <option value="50">50 por página</option>
+                    <option value="100">100 por página</option>
+                  </select>
+                  <div class="d-flex gap-2">
+                    <button class="btn btn-outline-secondary" id="export-csv">Exportar CSV</button>
+                    <button class="btn btn-outline-secondary" id="export-pdf">Exportar PDF</button>
+                  </div>
+                </div>
+              </div>
+              <div class="table-responsive mt-3">
+                <table class="table align-middle">
+                  <thead>
+                    <tr>
+                      <th>Produto</th>
+                      <th>Categoria</th>
+                      <th>Saldo</th>
+                      <th>Mín/Máx</th>
+                      <th>Validade</th>
+                      <th>Status</th>
+                      <th>Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody id="stock-table-body"></tbody>
+                </table>
+              </div>
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-3">
+                <small class="text-muted" id="stock-pagination-summary">Página 1</small>
+                <div class="btn-group" role="group" aria-label="Paginação">
+                  <button class="btn btn-outline-secondary" id="stock-prev">Anterior</button>
+                  <button class="btn btn-outline-secondary" id="stock-next">Próxima</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row g-4 mt-2">
+          <div class="col-lg-6">
+            <div class="form-card">
+              <h5>Histórico de movimentações</h5>
+              <div class="list-group list-group-flush" id="stock-history"></div>
+            </div>
+          </div>
+          <div class="col-lg-6">
+            <div class="form-card">
+              <h5>Sugestões de reposição</h5>
+              <div class="list-group list-group-flush" id="restock-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row g-4 mt-2">
+          <div class="col-12">
+            <div class="form-card">
+              <h5>Pedidos de compra</h5>
+              <div class="table-responsive">
+                <table class="table align-middle">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Fornecedor</th>
+                      <th>Status</th>
+                      <th>Criado em</th>
+                      <th>Recebido em</th>
+                      <th>Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody id="purchase-orders-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <div class="modal fade" id="stockDetailModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="stock-detail-title">Detalhes do produto</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-2"><strong>Categoria:</strong> <span id="stock-detail-category"></span></div>
+            <div class="mb-2"><strong>Status:</strong> <span id="stock-detail-status"></span></div>
+            <div class="mb-2"><strong>Validade:</strong> <span id="stock-detail-validity"></span></div>
+            <div class="mb-2"><strong>Fornecedor:</strong> <span id="stock-detail-supplier"></span></div>
+            <div class="mb-2"><strong>Movimentações recentes:</strong></div>
+            <ul class="list-group" id="stock-detail-movements"></ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal fade" id="stockAdjustModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="stock-adjust-title">Ajuste rápido de estoque</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+          </div>
+          <div class="modal-body">
+            <form id="stock-adjust-form">
+              <div class="mb-3">
+                <label class="form-label">Produto</label>
+                <input class="form-control" id="stock-adjust-product" readonly />
+                <input type="hidden" id="stock-adjust-id" />
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Ajuste (ex.: +5 ou -3)</label>
+                <input class="form-control" id="stock-adjust-value" placeholder="+0" required />
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Motivo</label>
+                <input class="form-control" id="stock-adjust-reason" placeholder="Ex.: inventário, quebra" required />
+              </div>
+              <button class="btn btn-success w-100" type="submit">Salvar ajuste</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/js/role-guard.js"></script>
+    <script src="/js/estoque.js"></script>
+  </body>
+</html>

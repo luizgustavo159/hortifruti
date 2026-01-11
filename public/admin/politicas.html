@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GreenStore | Administração - Políticas</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/styles.css" />
+  </head>
+  <body>
+    <header class="hero hero--compact">
+      <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container">
+          <a class="navbar-brand fw-bold" href="/">GreenStore</a>
+          <button
+            class="navbar-toggler"
+            type="button"
+            data-bs-toggle="collapse"
+            data-bs-target="#navbarNav"
+            aria-controls="navbarNav"
+            aria-expanded="false"
+            aria-label="Toggle navigation"
+          >
+            <span class="navbar-toggler-icon"></span>
+          </button>
+          <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav ms-auto">
+              <li class="nav-item"><a class="nav-link" href="/admin/">Administração</a></li>
+              <li class="nav-item"><a class="nav-link" href="/admin/perfil.html">Perfis</a></li>
+              <li class="nav-item"><a class="nav-link" href="/admin/relatorios.html">Relatórios</a></li>
+              <li class="nav-item"><a class="nav-link" href="/admin/logs.html">Logs</a></li>
+              <li class="nav-item"><a class="nav-link" href="/admin/politicas.html">Políticas</a></li>
+              <li class="nav-item d-flex align-items-center">
+                <button class="btn btn-outline-light btn-sm ms-lg-2" id="logout-button" type="button">
+                  Sair
+                </button>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </nav>
+      <div class="container hero-content">
+        <h1 class="display-5 fw-bold">Políticas do sistema</h1>
+        <p class="lead">Defina limites globais para descontos, perdas e segurança.</p>
+      </div>
+    </header>
+
+    <main class="section">
+      <div class="container">
+        <div class="form-card">
+          <h5>Parâmetros principais</h5>
+          <form id="settings-form">
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label">Desconto máximo (%)</label>
+                <input class="form-control" id="setting-max-discount" type="number" />
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Limite de perdas (R$)</label>
+                <input class="form-control" id="setting-max-losses" type="number" />
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Tentativas de login</label>
+                <input class="form-control" id="setting-login-attempts" type="number" />
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Minutos de bloqueio</label>
+                <input class="form-control" id="setting-lock-minutes" type="number" />
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Desconto com aprovação (%)</label>
+                <input class="form-control" id="setting-approval-threshold" type="number" />
+              </div>
+            </div>
+            <button class="btn btn-success mt-3" type="submit">Salvar políticas</button>
+            <div id="settings-feedback" class="alert d-none" role="alert"></div>
+          </form>
+        </div>
+      </div>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/js/role-guard.js"></script>
+    <script src="/js/admin-politicas.js"></script>
+  </body>
+</html>

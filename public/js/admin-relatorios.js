@@ -1,0 +1,194 @@
+const reportTotalSales = document.getElementById("report-total-sales");
+const reportTotalLosses = document.getElementById("report-total-losses");
+const reportLowStock = document.getElementById("report-low-stock");
+const reportCriticalList = document.getElementById("report-critical-list");
+const reportExpiringList = document.getElementById("report-expiring-list");
+const reportChart = document.getElementById("report-chart");
+const reportFilterForm = document.getElementById("report-filter-form");
+const reportStart = document.getElementById("report-start");
+const reportEnd = document.getElementById("report-end");
+const reportExportButton = document.getElementById("report-export");
+const reportSalesChange = document.getElementById("report-sales-change");
+const reportLossesChange = document.getElementById("report-losses-change");
+const reportStockChange = document.getElementById("report-stock-change");
+const reportOperatorTable = document.getElementById("report-operator-table");
+const reportCategoryTable = document.getElementById("report-category-table");
+
+let chartInstance = null;
+
+const getToken = () => localStorage.getItem("greenstore_token");
+
+const fetchJson = async (url) => {
+  const token = getToken();
+  const response = await fetch(url, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.message || "Erro na requisição.");
+  }
+  return data;
+};
+
+const buildReportQuery = () => {
+  const params = new URLSearchParams();
+  if (reportStart?.value) {
+    params.set("start", reportStart.value);
+  }
+  if (reportEnd?.value) {
+    params.set("end", reportEnd.value);
+  }
+  const query = params.toString();
+  return query ? `?${query}` : "";
+};
+
+const formatCurrency = (value) =>
+  Number(value).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+const renderList = (element, items, emptyMessage) => {
+  if (!element) {
+    return;
+  }
+  if (!items.length) {
+    element.innerHTML = `<li class="text-muted">${emptyMessage}</li>`;
+    return;
+  }
+  element.innerHTML = items.map((item) => `<li>${item}</li>`).join("");
+};
+
+const renderTable = (element, items, emptyMessage) => {
+  if (!element) {
+    return;
+  }
+  if (!items.length) {
+    element.innerHTML = `<tr><td colspan="3" class="text-muted">${emptyMessage}</td></tr>`;
+    return;
+  }
+  element.innerHTML = items
+    .map(
+      (item) => `
+        <tr>
+          <td>${item.label}</td>
+          <td>${item.items}</td>
+          <td>${formatCurrency(item.total)}</td>
+        </tr>
+      `
+    )
+    .join("");
+};
+
+const renderChart = (sales, losses) => {
+  if (!reportChart) {
+    return;
+  }
+  const data = {
+    labels: ["Vendas", "Perdas"],
+    datasets: [
+      {
+        data: [sales, losses],
+        backgroundColor: ["#1fbf75", "#e05757"],
+      },
+    ],
+  };
+  if (chartInstance) {
+    chartInstance.data = data;
+    chartInstance.update();
+    return;
+  }
+  chartInstance = new Chart(reportChart, {
+    type: "bar",
+    data,
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+      },
+    },
+  });
+};
+
+const refreshReports = async () => {
+  try {
+    const query = buildReportQuery();
+    const [summary, byOperator, byCategory] = await Promise.all([
+      fetchJson(`/api/reports/summary${query}`),
+      fetchJson(`/api/reports/by-operator${query}`),
+      fetchJson(`/api/reports/by-category${query}`),
+    ]);
+    if (reportTotalSales) {
+      reportTotalSales.textContent = formatCurrency(summary.total_sales || 0);
+    }
+    if (reportTotalLosses) {
+      reportTotalLosses.textContent = formatCurrency(summary.total_losses || 0);
+    }
+    if (reportLowStock) {
+      reportLowStock.textContent = summary.low_stock?.length || 0;
+    }
+    renderList(
+      reportCriticalList,
+      (summary.low_stock || []).map((item) => `${item.name} (${item.current_stock})`),
+      "Nenhum item crítico."
+    );
+    renderList(
+      reportExpiringList,
+      (summary.expiring_products || []).map((item) => `${item.name} (${item.expires_at})`),
+      "Nenhum item vencendo."
+    );
+    renderTable(
+      reportOperatorTable,
+      (byOperator || []).map((row) => ({
+        label: row.name || "Sem operador",
+        items: row.total_items || 0,
+        total: row.total_sales || 0,
+      })),
+      "Nenhum operador registrado."
+    );
+    renderTable(
+      reportCategoryTable,
+      (byCategory || []).map((row) => ({
+        label: row.category || "Sem categoria",
+        items: row.total_items || 0,
+        total: row.total_sales || 0,
+      })),
+      "Nenhuma categoria registrada."
+    );
+    renderChart(summary.total_sales || 0, summary.total_losses || 0);
+    if (reportSalesChange) {
+      reportSalesChange.textContent = "0%";
+    }
+    if (reportLossesChange) {
+      reportLossesChange.textContent = "0%";
+    }
+    if (reportStockChange) {
+      reportStockChange.textContent = "0%";
+    }
+  } catch (error) {
+    renderList(reportCriticalList, [], "Erro ao carregar relatório.");
+    renderList(reportExpiringList, [], "Erro ao carregar relatório.");
+    renderTable(reportOperatorTable, [], "Erro ao carregar operadores.");
+    renderTable(reportCategoryTable, [], "Erro ao carregar categorias.");
+  }
+};
+
+reportFilterForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  refreshReports();
+});
+
+reportExportButton?.addEventListener("click", () => {
+  const rows = [
+    ["Total de vendas", reportTotalSales?.textContent || ""],
+    ["Total de perdas", reportTotalLosses?.textContent || ""],
+    ["Itens críticos", reportLowStock?.textContent || ""],
+  ];
+  const csv = rows.map((row) => row.map((cell) => `"${cell}"`).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "relatorio.csv";
+  link.click();
+  URL.revokeObjectURL(url);
+});
+
+refreshReports();
