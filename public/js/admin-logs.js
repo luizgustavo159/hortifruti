@@ -11,19 +11,7 @@ let logsCache = [];
 let logCurrentPage = 1;
 let logPageLimit = 10;
 
-const getToken = () => localStorage.getItem("greenstore_token");
-
-const fetchJson = async (url) => {
-  const token = getToken();
-  const response = await fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.message || "Erro na requisição.");
-  }
-  return data;
-};
+const { getJson } = window.apiClient || {};
 
 const formatStatus = (action) => {
   if (["remove_item", "discount_override", "cancel_sale"].includes(action)) {
@@ -142,7 +130,7 @@ const getFilteredLogs = () => {
 
 const loadLogs = async () => {
   try {
-    logsCache = await fetchJson("/api/audit-logs");
+    logsCache = await getJson("/api/audit-logs");
     applyFilters();
   } catch (error) {
     renderLogs([]);

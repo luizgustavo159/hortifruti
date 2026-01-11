@@ -1,4 +1,4 @@
-const getStoredToken = () => localStorage.getItem("greenstore_token");
+const getStoredToken = () => window.apiClient?.getToken?.() || localStorage.getItem("greenstore_token");
 
 const decodeTokenPayload = (token) => {
   if (!token) {
@@ -29,14 +29,22 @@ const attachLogoutHandler = () => {
   }
   logoutButton.addEventListener("click", async () => {
     try {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      if (window.apiClient?.postJson) {
+        await window.apiClient.postJson("/api/auth/logout", {});
+      } else {
+        await fetch("/api/auth/logout", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      }
     } catch (error) {
       // ignore logout failures
     } finally {
-      localStorage.removeItem("greenstore_token");
+      if (window.apiClient?.clearToken) {
+        window.apiClient.clearToken();
+      } else {
+        localStorage.removeItem("greenstore_token");
+      }
       window.location.replace("/");
     }
   });

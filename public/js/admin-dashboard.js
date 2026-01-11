@@ -4,19 +4,7 @@ const criticalLogsEl = document.getElementById("admin-critical-logs");
 const pendingItemsEl = document.getElementById("admin-pending-items");
 const pendingListEl = document.getElementById("admin-pending-list");
 
-const getToken = () => localStorage.getItem("greenstore_token");
-
-const fetchJson = async (url) => {
-  const token = getToken();
-  const response = await fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.message || "Erro na requisição.");
-  }
-  return data;
-};
+const { getJson } = window.apiClient || {};
 
 const renderPendings = ({ lowStock = [], expiringProducts = [] }) => {
   if (!pendingListEl) {
@@ -39,9 +27,9 @@ const renderPendings = ({ lowStock = [], expiringProducts = [] }) => {
 const refreshDashboard = async () => {
   try {
     const [users, logs, summary] = await Promise.all([
-      fetchJson("/api/users"),
-      fetchJson("/api/audit-logs"),
-      fetchJson("/api/reports/summary"),
+      getJson("/api/users"),
+      getJson("/api/audit-logs"),
+      getJson("/api/reports/summary"),
     ]);
 
     const activeUsers = users.filter((user) => user.is_active);

@@ -16,19 +16,7 @@ const reportCategoryTable = document.getElementById("report-category-table");
 
 let chartInstance = null;
 
-const getToken = () => localStorage.getItem("greenstore_token");
-
-const fetchJson = async (url) => {
-  const token = getToken();
-  const response = await fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.message || "Erro na requisição.");
-  }
-  return data;
-};
+const { getJson } = window.apiClient || {};
 
 const buildReportQuery = () => {
   const params = new URLSearchParams();
@@ -111,9 +99,9 @@ const refreshReports = async () => {
   try {
     const query = buildReportQuery();
     const [summary, byOperator, byCategory] = await Promise.all([
-      fetchJson(`/api/reports/summary${query}`),
-      fetchJson(`/api/reports/by-operator${query}`),
-      fetchJson(`/api/reports/by-category${query}`),
+      getJson(`/api/reports/summary${query}`),
+      getJson(`/api/reports/by-operator${query}`),
+      getJson(`/api/reports/by-category${query}`),
     ]);
     if (reportTotalSales) {
       reportTotalSales.textContent = formatCurrency(summary.total_sales || 0);

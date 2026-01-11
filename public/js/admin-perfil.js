@@ -26,27 +26,7 @@ let pendingUpdatePayload = null;
 let pendingApprovalUserId = null;
 let activeSessionIds = [];
 
-const getToken = () => localStorage.getItem("greenstore_token");
-
-const fetchJson = async (url, options = {}) => {
-  const token = getToken();
-  const baseHeaders = {
-    "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      ...baseHeaders,
-      ...(options.headers || {}),
-    },
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.message || "Erro na requisição.");
-  }
-  return data;
-};
+const { requestJson } = window.apiClient || {};
 
 const setFeedback = (element, message, type) => {
   if (!element) {
@@ -101,7 +81,7 @@ const renderUserAudit = async (userId) => {
   }
   userAuditList.innerHTML = "<li class=\"text-muted\">Carregando logs...</li>";
   try {
-    const logs = await fetchJson("/api/audit-logs");
+    const logs = await requestJson("/api/audit-logs");
     const userLogs = logs.filter((log) => Number(log.performed_by) === Number(userId)).slice(0, 5);
     if (!userLogs.length) {
       userAuditList.innerHTML = "<li class=\"text-muted\">Nenhuma ação recente.</li>";
@@ -121,7 +101,7 @@ const renderUserSessions = async (userId) => {
   }
   userSessionList.innerHTML = "<li class=\"text-muted\">Carregando sessões...</li>";
   try {
-    const sessions = await fetchJson(`/api/sessions?user_id=${userId}`);
+    const sessions = await requestJson(`/api/sessions?user_id=${userId}`);
     activeSessionIds = sessions.map((session) => session.id);
     if (!sessions.length) {
       userSessionList.innerHTML = "<li class=\"text-muted\">Nenhuma sessão ativa.</li>";
@@ -159,7 +139,7 @@ const applyFilters = () => {
 
 const loadUsers = async () => {
   try {
-    const data = await fetchJson("/api/users");
+    const data = await requestJson("/api/users");
     usersCache = data.map((user) => ({
       ...user,
       permissions: Array.isArray(user.permissions) ? user.permissions : [],
@@ -176,7 +156,7 @@ userForm?.addEventListener("submit", async (event) => {
   const payload = Object.fromEntries(new FormData(userForm).entries());
   payload.permissions = getPermissionsFromForm("permissions");
   try {
-    await fetchJson("/api/users", { method: "POST", body: JSON.stringify(payload) });
+    await requestJson("/api/users", { method: "POST", body: JSON.stringify(payload) });
     setFeedback(userFormFeedback, "Usuário criado com sucesso.", "success");
     userForm.reset();
     setPermissionsOnForm("permissions", []);
@@ -235,7 +215,7 @@ userEditForm?.addEventListener("submit", async (event) => {
     return;
   }
   try {
-    await fetchJson(`/api/users/${editUserId.value}`, {
+    await requestJson(`/api/users/${editUserId.value}`, {
       method: "PUT",
       body: JSON.stringify(payload),
     });
@@ -253,7 +233,7 @@ userApprovalForm?.addEventListener("submit", async (event) => {
     return;
   }
   try {
-    const approval = await fetchJson("/api/approvals", {
+    const approval = await requestJson("/api/approvals", {
       method: "POST",
       body: JSON.stringify({
         email: approvalEmail.value,
@@ -263,7 +243,7 @@ userApprovalForm?.addEventListener("submit", async (event) => {
         metadata: { user_id: pendingApprovalUserId },
       }),
     });
-    await fetchJson(`/api/users/${pendingApprovalUserId}`, {
+    await requestJson(`/api/users/${pendingApprovalUserId}`, {
       method: "PUT",
       body: JSON.stringify(pendingUpdatePayload),
       headers: { "x-approval-token": approval.token },
@@ -287,7 +267,7 @@ revokeSessionsButton?.addEventListener("click", async () => {
   try {
     await Promise.all(
       activeSessionIds.map((sessionId) =>
-        fetchJson(`/api/sessions/${sessionId}`, { method: "DELETE" })
+        requestJson(`/api/sessions/${sessionId}`, { method: "DELETE" })
       )
     );
     await renderUserSessions(editUserId.value);

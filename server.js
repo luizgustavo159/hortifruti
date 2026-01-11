@@ -1,5 +1,3 @@
-require("dotenv").config();
-
 const path = require("path");
 const express = require("express");
 const helmet = require("helmet");
@@ -13,6 +11,7 @@ const pinoHttp = require("pino-http");
 const nodemailer = require("nodemailer");
 const { body, validationResult } = require("express-validator");
 const db = require("./db");
+const config = require("./config");
 
 const app = express();
 const requestMetrics = {
@@ -21,50 +20,30 @@ const requestMetrics = {
   startedAt: Date.now(),
 };
 
-const PORT = process.env.PORT || 3000;
-let JWT_SECRET = process.env.JWT_SECRET || "";
-const NODE_ENV = process.env.NODE_ENV || "development";
-const LOG_LEVEL = process.env.LOG_LEVEL || "info";
-const ADMIN_BOOTSTRAP_TOKEN = process.env.ADMIN_BOOTSTRAP_TOKEN || "";
-const PASSWORD_RESET_TTL_MINUTES = Number(process.env.PASSWORD_RESET_TTL_MINUTES || 30);
-const ALERT_SLOW_THRESHOLD_MS = Number(process.env.ALERT_SLOW_THRESHOLD_MS || 2000);
-const METRICS_ENABLED = process.env.METRICS_ENABLED !== "false";
-const PASSWORD_RESET_URL = process.env.PASSWORD_RESET_URL || "";
-const RESET_EMAIL_FROM = process.env.RESET_EMAIL_FROM || "";
-const SMTP_HOST = process.env.SMTP_HOST || "";
-const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
-const SMTP_SECURE = process.env.SMTP_SECURE === "true";
-const SMTP_USER = process.env.SMTP_USER || "";
-const SMTP_PASS = process.env.SMTP_PASS || "";
-const RESET_SMS_WEBHOOK_URL = process.env.RESET_SMS_WEBHOOK_URL || "";
-const ALERT_WEBHOOK_URL = process.env.ALERT_WEBHOOK_URL || "";
-
-if (!JWT_SECRET) {
-  if (NODE_ENV === "development") {
-    JWT_SECRET = "development-secret";
-    // eslint-disable-next-line no-console
-    console.warn("JWT_SECRET não configurado. Usando segredo temporário apenas para desenvolvimento.");
-  } else {
-    throw new Error("JWT_SECRET inválido. Configure um segredo forte para produção.");
-  }
-} else if (JWT_SECRET.length < 32 && NODE_ENV !== "development") {
-  throw new Error("JWT_SECRET deve ter ao menos 32 caracteres.");
-}
-
-if (NODE_ENV !== "development" && process.env.CORS_ORIGIN === "*") {
-  throw new Error("CORS_ORIGIN não pode ser '*' fora de desenvolvimento.");
-}
+const {
+  PORT,
+  JWT_SECRET,
+  NODE_ENV,
+  LOG_LEVEL,
+  ADMIN_BOOTSTRAP_TOKEN,
+  PASSWORD_RESET_TTL_MINUTES,
+  ALERT_SLOW_THRESHOLD_MS,
+  METRICS_ENABLED,
+  PASSWORD_RESET_URL,
+  RESET_EMAIL_FROM,
+  SMTP_HOST,
+  SMTP_PORT,
+  SMTP_SECURE,
+  SMTP_USER,
+  SMTP_PASS,
+  RESET_SMS_WEBHOOK_URL,
+  ALERT_WEBHOOK_URL,
+  corsOrigin,
+} = config;
 
 app.use(helmet());
-const allowedOrigins = (process.env.CORS_ORIGIN || "")
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-if (NODE_ENV !== "development" && !allowedOrigins.length) {
-  throw new Error("CORS_ORIGIN deve ser configurado fora de desenvolvimento.");
-}
 const corsOptions = {
-  origin: NODE_ENV === "development" && !allowedOrigins.length ? "*" : allowedOrigins,
+  origin: corsOrigin,
 };
 app.use(cors(corsOptions));
 app.use(express.json({ limit: "1mb" }));
