@@ -63,54 +63,7 @@ let stockProducts = [];
 let productLookup = new Map();
 let suppliersCache = [];
 
-const getToken = () => localStorage.getItem("greenstore_token");
-
-const postJson = async (url, payload) => {
-  const token = getToken();
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(payload),
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.message || "Erro na requisição.");
-  }
-  return data;
-};
-
-const postJsonWithHeaders = async (url, payload, headers = {}) => {
-  const token = getToken();
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers,
-    },
-    body: JSON.stringify(payload),
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.message || "Erro na requisição.");
-  }
-  return data;
-};
-
-const fetchJson = async (url) => {
-  const token = getToken();
-  const response = await fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.message || "Erro na requisição.");
-  }
-  return data;
-};
+const { getJson, postJson, requestJson } = window.apiClient || {};
 
 const resolveProductByName = async (name) => {
   const normalized = name.trim().toLowerCase();
@@ -130,7 +83,7 @@ const resolveProductByName = async (name) => {
 };
 
 const ensureCategory = async (name) => {
-  const categories = await fetchJson("/api/categories");
+  const categories = await getJson("/api/categories");
   const existing = categories.find(
     (category) => category.name.toLowerCase() === name.trim().toLowerCase()
   );
@@ -595,7 +548,7 @@ const loadProducts = async () => {
     return;
   }
   try {
-    stockProducts = await fetchJson("/api/products");
+    stockProducts = await getJson("/api/products");
     buildProductLookup(stockProducts);
     renderCategoryFilter();
     renderProductDatalist();
@@ -605,10 +558,10 @@ const loadProducts = async () => {
     currentPage = 1;
     renderTable();
     const [movements, restock, suppliers, orders] = await Promise.all([
-      fetchJson("/api/stock/movements?limit=6"),
-      fetchJson("/api/stock/restock-suggestions"),
-      fetchJson("/api/suppliers"),
-      fetchJson("/api/purchase-orders"),
+      getJson("/api/stock/movements?limit=6"),
+      getJson("/api/stock/restock-suggestions"),
+      getJson("/api/suppliers"),
+      getJson("/api/purchase-orders"),
     ]);
     renderHistory(movements);
     renderRestock(restock);
@@ -645,7 +598,7 @@ const openStockDetail = (row) => {
   }
   stockDetailModal.show();
   if (productId) {
-    fetchJson(`/api/stock/movements?product_id=${productId}&limit=5`)
+    getJson(`/api/stock/movements?product_id=${productId}&limit=5`)
       .then((movements) => {
         if (!stockDetailMovements) {
           return;
@@ -1008,10 +961,16 @@ stockMoveForm?.addEventListener("submit", (event) => {
           window.alert("Informe o motivo da perda.");
           return Promise.reject(new Error("Motivo é obrigatório."));
         }
-        return postJsonWithHeaders("/api/stock/loss", {
-          product_id: product.id,
-          quantity: quantityValue,
-          reason,
+        return requestJson("/api/stock/loss", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            product_id: product.id,
+            quantity: quantityValue,
+            reason,
+          }),
         }).catch((error) => {
           if (error.message?.includes("Aprovação")) {
             return requestApproval({
@@ -1019,15 +978,18 @@ stockMoveForm?.addEventListener("submit", (event) => {
               reason,
               metadata: { product_id: product.id, quantity: quantityValue },
             }).then((approval) =>
-              postJsonWithHeaders(
-                "/api/stock/loss",
-                {
+              requestJson("/api/stock/loss", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-approval-token": approval.token,
+                },
+                body: JSON.stringify({
                   product_id: product.id,
                   quantity: quantityValue,
                   reason,
-                },
-                { "x-approval-token": approval.token }
-              )
+                }),
+              })
             );
           }
           throw error;
@@ -1071,7 +1033,7 @@ supplierForm?.addEventListener("submit", (event) => {
   })
     .then(() => {
       supplierForm.reset();
-      return fetchJson("/api/suppliers");
+      return getJson("/api/suppliers");
     })
     .then((suppliers) => {
       suppliersCache = suppliers;

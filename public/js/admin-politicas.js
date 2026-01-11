@@ -6,23 +6,7 @@ const settingLoginAttempts = document.getElementById("setting-login-attempts");
 const settingLockMinutes = document.getElementById("setting-lock-minutes");
 const settingApprovalThreshold = document.getElementById("setting-approval-threshold");
 
-const getToken = () => localStorage.getItem("greenstore_token");
-
-const fetchJson = async (url, options = {}) => {
-  const token = getToken();
-  const response = await fetch(url, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    ...options,
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.message || "Erro na requisição.");
-  }
-  return data;
-};
+const { requestJson } = window.apiClient || {};
 
 const setFeedback = (message, type) => {
   if (!settingsFeedback) {
@@ -42,7 +26,7 @@ const clearFeedback = () => {
 
 const loadSettings = async () => {
   try {
-    const settings = await fetchJson("/api/settings");
+    const settings = await requestJson("/api/settings");
     if (settingMaxDiscount) {
       settingMaxDiscount.value = settings.max_discount || "";
     }
@@ -74,7 +58,7 @@ settingsForm?.addEventListener("submit", async (event) => {
     approval_threshold: settingApprovalThreshold?.value || "",
   };
   try {
-    await fetchJson("/api/settings", { method: "PUT", body: JSON.stringify(payload) });
+    await requestJson("/api/settings", { method: "PUT", body: JSON.stringify(payload) });
     setFeedback("Políticas atualizadas.", "success");
   } catch (error) {
     setFeedback(error.message || "Erro ao salvar políticas.", "danger");

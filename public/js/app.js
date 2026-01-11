@@ -2,9 +2,6 @@ const form = document.getElementById("login-form");
 const responseBox = document.getElementById("api-response");
 const loginFeedback = document.getElementById("login-feedback");
 
-const getToken = () => localStorage.getItem("greenstore_token");
-const setToken = (token) => localStorage.setItem("greenstore_token", token);
-
 const renderResponse = (data) => {
   if (!responseBox) {
     return;
@@ -19,23 +16,7 @@ const handleError = (message) => {
   responseBox.textContent = message;
 };
 
-const postJson = async (url, payload) => {
-  const token = getToken();
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(payload),
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.message || "Erro na requisição.");
-  }
-  return data;
-};
+const { postJson, setToken } = window.apiClient || {};
 
 form?.addEventListener("submit", async (event) => {
   event.preventDefault();

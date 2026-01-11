@@ -34,7 +34,7 @@ const approvalModal = approvalModalElement
   : null;
 const noteModal = noteModalElement ? new bootstrap.Modal(noteModalElement) : null;
 
-const getToken = () => localStorage.getItem("greenstore_token");
+const { postJson, requestJson } = window.apiClient || {};
 
 const state = {
   items: [],
@@ -168,46 +168,21 @@ const syncItemsFromDom = () => {
   updateSummary();
 };
 
-const requestApproval = async ({ action, reason, metadata }) => {
-  const response = await fetch("/api/approvals", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      email: managerEmailInput.value,
-      password: managerPasswordInput.value,
-      action,
-      reason,
-      metadata,
-    }),
+const requestApproval = async ({ action, reason, metadata }) =>
+  postJson("/api/approvals", {
+    email: managerEmailInput.value,
+    password: managerPasswordInput.value,
+    action,
+    reason,
+    metadata,
   });
 
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.message || "Falha ao aprovar.");
-  }
-  return data;
-};
-
-const postWithApproval = async ({ url, payload, token }) => {
-  const authToken = getToken();
-  const response = await fetch(url, {
+const postWithApproval = async ({ url, payload, token }) =>
+  requestJson(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-approval-token": token,
-      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-    },
+    headers: { "x-approval-token": token },
     body: JSON.stringify(payload),
   });
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.message || "Ação não autorizada.");
-  }
-  return data;
-};
 
 const openApprovalModal = (action, metadata) => {
   if (!approvalModal) {

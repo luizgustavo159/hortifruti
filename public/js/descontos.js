@@ -35,7 +35,7 @@ let stagedProductIds = [];
 let currentPage = 1;
 let pageSize = 10;
 
-const getToken = () => localStorage.getItem("greenstore_token");
+const { requestJson } = window.apiClient || {};
 
 const setFeedback = (message, type) => {
   if (!discountFeedback) {
@@ -51,22 +51,6 @@ const resetFeedback = () => {
   }
   discountFeedback.className = "alert d-none";
   discountFeedback.textContent = "";
-};
-
-const fetchJson = async (url, options = {}) => {
-  const token = getToken();
-  const response = await fetch(url, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    ...options,
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.message || "Erro na requisição.");
-  }
-  return data;
 };
 
 const formatDiscountType = (discount) => {
@@ -201,7 +185,7 @@ const syncPickerCount = () => {
 
 const refreshProducts = async () => {
   try {
-    const data = await fetchJson("/api/products");
+    const data = await requestJson("/api/products");
     productsCache = data;
     renderProductPicker(productPickerSearch?.value || "");
     syncPickerCount();
@@ -449,7 +433,7 @@ const buildPayload = () => {
 
 const refreshDiscounts = async () => {
   try {
-    const data = await fetchJson("/api/discounts");
+    const data = await requestJson("/api/discounts");
     discountsCache = data.map((discount) => {
       let criteria = null;
       if (discount.criteria) {
@@ -574,13 +558,13 @@ discountForm?.addEventListener("submit", async (event) => {
 
   try {
     if (editingDiscountId) {
-      await fetchJson(`/api/discounts/${editingDiscountId}`, {
+      await requestJson(`/api/discounts/${editingDiscountId}`, {
         method: "PUT",
         body: JSON.stringify(payload),
       });
       setFeedback("Promoção atualizada com sucesso.", "success");
     } else {
-      await fetchJson("/api/discounts", { method: "POST", body: JSON.stringify(payload) });
+      await requestJson("/api/discounts", { method: "POST", body: JSON.stringify(payload) });
       setFeedback("Promoção cadastrada com sucesso.", "success");
     }
     discountForm.reset();
@@ -622,14 +606,14 @@ discountsList?.addEventListener("click", async (event) => {
     }
 
     if (action === "toggle") {
-      await fetchJson(`/api/discounts/${id}`, {
+      await requestJson(`/api/discounts/${id}`, {
         method: "PUT",
         body: JSON.stringify({ active: discount.active ? 0 : 1 }),
       });
     }
 
     if (action === "expire") {
-      await fetchJson(`/api/discounts/${id}`, {
+      await requestJson(`/api/discounts/${id}`, {
         method: "PUT",
         body: JSON.stringify({ active: 0, ends_at: new Date().toISOString().slice(0, 10) }),
       });
@@ -756,7 +740,7 @@ discountImport?.addEventListener("change", async (event) => {
         acc[key] = values[index];
         return acc;
       }, {});
-      await fetchJson("/api/discounts", {
+      await requestJson("/api/discounts", {
         method: "POST",
         body: JSON.stringify({
           ...payload,

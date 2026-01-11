@@ -1,0 +1,1981 @@
+const express = require("express");
+const crypto = require("crypto");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const { body, validationResult } = require("express-validator");
+const db = require("../../db");
+const config = require("../../config");
+const {
+  sendAlertNotification,
+  sendPasswordResetNotification,
+} = require("../services/notifications");
+
+const router = express.Router();
+
+const {
+  JWT_SECRET,
+  ADMIN_BOOTSTRAP_TOKEN,
+  PASSWORD_RESET_TTL_MINUTES,
+  ALERT_SLOW_THRESHOLD_MS,
+  METRICS_ENABLED,
+} = config;
+
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).json({ message: "Token não informado." });
+  }
+  const token = authHeader.replace("Bearer ", "");
+  return jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ message: "Token inválido." });
+    }
+    db.get(
+      "SELECT * FROM sessions WHERE token = ? AND revoked_at IS NULL",
+      [token],
+      (sessionErr, session) => {
+        if (sessionErr || !session) {
+          return res.status(401).json({ message: "Sessão expirada." });
+        }
+        req.user = user;
+        return next();
+      }
+    );
+  });
+};
+
+const roleLevels = {
+  operator: 1,
+  supervisor: 2,
+  manager: 3,
+  admin: 4,
+};
+
+const hasRole = (user, role) => {
+  const current = roleLevels[user?.role] || 0;
+  return current >= roleLevels[role];
+};
+
+const requireRole = (role) => (req, res, next) => {
+  if (!hasRole(req.user, role)) {
+    return res.status(403).json({ message: "Acesso não autorizado." });
+  }
+  return next();
+};
+
+const requireAdmin = requireRole("admin");
+const requireManager = requireRole("manager");
+const requireSupervisor = requireRole("supervisor");
+
+const hashToken = (token) => crypto.createHash("sha256").update(token).digest("hex");
+
+const runWithTransaction = (work, callback) => {
+  db.withTransaction((tx, finish) => {
+    work(tx, finish);
+  }, callback);
+};
+
+const logAudit = ({ action, details, performedBy, approvedBy }) => {
+  db.run(
+    "INSERT INTO audit_logs (action, details, performed_by, approved_by) VALUES (?, ?, ?, ?)",
+    [action, details ? JSON.stringify(details) : null, performedBy, approvedBy]
+  );
+};
+
+const getSettings = (keys, callback) => {
+  if (!keys.length) {
+    callback({});
+    return;
+  }
+  const placeholders = keys.map(() => "?").join(",");
+  db.all(`SELECT key, value FROM settings WHERE key IN (${placeholders})`, keys, (err, rows) => {
+    if (err) {
+      callback({});
+      return;
+    }
+    const result = rows.reduce((acc, row) => {
+      acc[row.key] = row.value;
+      return acc;
+    }, {});
+    callback(result);
+  });
+};
+
+const parseDateRange = (req, res) => {
+  const { start, end } = req.query;
+  const startDate = start ? new Date(start) : null;
+  const endDate = end ? new Date(end) : null;
+  if (start && Number.isNaN(startDate?.getTime())) {
+    res.status(400).json({ message: "Data inicial inválida." });
+    return null;
+  }
+  if (end && Number.isNaN(endDate?.getTime())) {
+    res.status(400).json({ message: "Data final inválida." });
+    return null;
+  }
+  if (startDate && endDate && startDate > endDate) {
+    res.status(400).json({ message: "Intervalo de datas inválido." });
+    return null;
+  }
+  return { start: start || null, end: end || null };
+};
+
+const buildDateFilter = (field, range) => {
+  const conditions = [];
+  const params = [];
+  if (range?.start) {
+    conditions.push(`date(${field}) >= date(?)`);
+    params.push(range.start);
+  }
+  if (range?.end) {
+    conditions.push(`date(${field}) <= date(?)`);
+    params.push(range.end);
+  }
+  return {
+    clause: conditions.length ? `WHERE ${conditions.join(" AND ")}` : "",
+    params,
+  };
+};
+
+const verifyApprovalToken = (token, action, callback) => {
+  if (!token) {
+    callback({ status: 401, message: "Aprovação necessária." });
+    return;
+  }
+  const tokenHash = hashToken(token);
+  db.get(
+    "SELECT * FROM approvals WHERE token_hash = ? AND action = ? AND used_at IS NULL",
+    [tokenHash, action],
+    (err, approval) => {
+      if (err || !approval) {
+        callback({ status: 403, message: "Aprovação inválida." });
+        return;
+      }
+      const expiresAt = new Date(approval.expires_at);
+      if (Number.isNaN(expiresAt.getTime()) || expiresAt < new Date()) {
+        callback({ status: 403, message: "Aprovação expirada." });
+        return;
+      }
+      db.run("UPDATE approvals SET used_at = CURRENT_TIMESTAMP WHERE id = ?", [approval.id]);
+      callback(null, approval);
+    }
+  );
+};
+
+const requireApproval = (action) => (req, res, next) => {
+  const token = req.headers["x-approval-token"];
+  verifyApprovalToken(token, action, (error, approval) => {
+    if (error) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    req.approval = approval;
+    return next();
+  });
+};
+
+router.get("/api/health", (req, res) => {
+  db.get("SELECT 1 AS ok", [], (err) => {
+    if (err) {
+      return res.status(500).json({ status: "error", db: "down", uptime: process.uptime() });
+    }
+    return res.json({ status: "ok", db: "ok", uptime: process.uptime() });
+  });
+});
+
+router.get("/api/metrics", authenticateToken, requireAdmin, (req, res) => {
+  db.get(
+    `SELECT COUNT(*)::int AS total,
+            SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END)::int AS errors
+     FROM request_metrics
+     WHERE created_at >= NOW() - INTERVAL '24 hours'`,
+    [],
+    (err, row) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao buscar métricas." });
+      }
+      return res.json({
+        total_requests: req.requestMetrics?.total || 0,
+        by_route: req.requestMetrics?.byRoute || {},
+        uptime_seconds: req.requestMetrics?.uptimeSeconds || 0,
+        last_24h: row || { total: 0, errors: 0 },
+      });
+    }
+  );
+});
+
+router.get("/api/alerts", authenticateToken, requireAdmin, (req, res) => {
+  const limit = Number(req.query.limit || 50);
+  const safeLimit = Number.isNaN(limit) ? 50 : Math.min(Math.max(limit, 1), 200);
+  db.all(
+    "SELECT * FROM alerts ORDER BY created_at DESC LIMIT ?",
+    [safeLimit],
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao buscar alertas." });
+      }
+      return res.json(rows);
+    }
+  );
+});
+
+router.post(
+  "/api/auth/register",
+  [
+    body("name").trim().notEmpty().withMessage("Nome é obrigatório."),
+    body("email").isEmail().withMessage("Email inválido."),
+    body("password").isLength({ min: 8 }).withMessage("Senha deve ter 8+ caracteres."),
+    body("phone")
+      .optional()
+      .matches(/^[0-9()+\-\s]{6,20}$/)
+      .withMessage("Telefone inválido."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { name, email, password, phone = null } = req.body;
+    const passwordHash = bcrypt.hashSync(password, 10);
+
+    db.get(
+      "INSERT INTO users (name, email, phone, password_hash) VALUES (?, ?, ?, ?) RETURNING id",
+      [name, email, phone, passwordHash],
+      (err, row) => {
+        if (err) {
+          return res.status(400).json({ message: "Email já cadastrado." });
+        }
+        return res.status(201).json({ id: row.id, name, email, phone });
+      }
+    );
+  }
+);
+
+router.post(
+  "/api/auth/bootstrap",
+  [
+    body("name").trim().notEmpty().withMessage("Nome é obrigatório."),
+    body("email").isEmail().withMessage("Email inválido."),
+    body("password").isLength({ min: 8 }).withMessage("Senha deve ter 8+ caracteres."),
+    body("phone")
+      .optional()
+      .matches(/^[0-9()+\-\s]{6,20}$/)
+      .withMessage("Telefone inválido."),
+  ],
+  (req, res) => {
+    if (!ADMIN_BOOTSTRAP_TOKEN) {
+      return res.status(500).json({ message: "Bootstrap não configurado." });
+    }
+    const bootstrapToken = req.headers["x-bootstrap-token"];
+    if (bootstrapToken !== ADMIN_BOOTSTRAP_TOKEN) {
+      return res.status(403).json({ message: "Token de bootstrap inválido." });
+    }
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    db.get("SELECT id FROM users WHERE role = 'admin' LIMIT 1", [], (err, row) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao verificar administradores." });
+      }
+      if (row) {
+        return res.status(409).json({ message: "Administrador já configurado." });
+      }
+
+      const { name, email, password, phone = null } = req.body;
+      const passwordHash = bcrypt.hashSync(password, 10);
+      const permissions = ["admin", "logs", "relatorios", "descontos", "estoque", "caixa"];
+
+      db.get(
+        "INSERT INTO users (name, email, phone, password_hash, role, permissions) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+        [name, email, phone, passwordHash, "admin", JSON.stringify(permissions)],
+        (insertErr, row) => {
+          if (insertErr) {
+            return res.status(500).json({ message: "Erro ao criar administrador." });
+          }
+          logAudit({
+            action: "admin_bootstrap",
+            details: { user_id: row.id, email },
+            performedBy: row.id,
+            approvedBy: row.id,
+          });
+          return res.status(201).json({ id: row.id });
+        }
+      );
+    });
+  }
+);
+
+router.post("/api/auth/logout", authenticateToken, (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader ? authHeader.replace("Bearer ", "") : null;
+  if (!token) {
+    return res.status(400).json({ message: "Token não informado." });
+  }
+  db.run(
+    "UPDATE sessions SET revoked_at = CURRENT_TIMESTAMP WHERE token = ?",
+    [token],
+    (err) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao encerrar sessão." });
+      }
+      return res.json({ status: "ok" });
+    }
+  );
+});
+
+router.post(
+  "/api/auth/request-password-reset",
+  [body("email").isEmail().withMessage("Email inválido.")],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    const { email } = req.body;
+    db.get("SELECT id, email, phone FROM users WHERE email = ?", [email], (err, user) => {
+      if (err || !user) {
+        return res.status(200).json({ status: "ok" });
+      }
+      const hasEmailChannel = Boolean(config.SMTP_HOST && config.RESET_EMAIL_FROM && user.email);
+      const hasSmsChannel = Boolean(config.RESET_SMS_WEBHOOK_URL && user.phone);
+      if (!hasEmailChannel && !hasSmsChannel) {
+        return res.status(500).json({ message: "Canal de reset não configurado." });
+      }
+      const token = crypto.randomBytes(20).toString("hex");
+      const tokenHash = hashToken(token);
+      const expiresAt = new Date(Date.now() + PASSWORD_RESET_TTL_MINUTES * 60 * 1000).toISOString();
+
+      db.run(
+        `INSERT INTO password_resets (user_id, token_hash, expires_at)
+         VALUES (?, ?, ?)`,
+        [user.id, tokenHash, expiresAt],
+        (insertErr) => {
+          if (insertErr) {
+            return res.status(500).json({ message: "Erro ao criar reset." });
+          }
+          sendPasswordResetNotification({ user, token, expiresAt })
+            .then(() => {
+              logAudit({
+                action: "password_reset_requested",
+                details: { user_id: user.id },
+                performedBy: user.id,
+              });
+              return res.json({ status: "ok" });
+            })
+            .catch((notifyErr) => {
+              return res.status(500).json({ message: "Erro ao enviar reset.", detail: notifyErr.message });
+            });
+        }
+      );
+    });
+  }
+);
+
+router.post(
+  "/api/auth/reset-password",
+  [
+    body("token").trim().notEmpty().withMessage("Token é obrigatório."),
+    body("password").isLength({ min: 8 }).withMessage("Senha deve ter 8+ caracteres."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    const { token, password } = req.body;
+    const tokenHash = hashToken(token);
+    db.get(
+      "SELECT * FROM password_resets WHERE token_hash = ? AND used_at IS NULL",
+      [tokenHash],
+      (err, reset) => {
+        if (err || !reset) {
+          return res.status(400).json({ message: "Token inválido." });
+        }
+        const expiresAt = new Date(reset.expires_at);
+        if (Number.isNaN(expiresAt.getTime()) || expiresAt < new Date()) {
+          return res.status(400).json({ message: "Token expirado." });
+        }
+
+        const passwordHash = bcrypt.hashSync(password, 10);
+        runWithTransaction((tx, finish) => {
+          tx.run(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            [passwordHash, reset.user_id],
+            (updateErr) => {
+              if (updateErr) {
+                finish(updateErr);
+                return;
+              }
+              tx.run(
+                "UPDATE password_resets SET used_at = CURRENT_TIMESTAMP WHERE id = ?",
+                [reset.id],
+                (resetErr) => {
+                  if (resetErr) {
+                    finish(resetErr);
+                    return;
+                  }
+                  tx.run(
+                    "UPDATE sessions SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = ? AND revoked_at IS NULL",
+                    [reset.user_id],
+                    (sessionErr) => {
+                      if (sessionErr) {
+                        finish(sessionErr);
+                        return;
+                      }
+                      finish(null);
+                    }
+                  );
+                }
+              );
+            }
+          );
+        }, (transactionErr) => {
+          if (transactionErr) {
+            return res.status(500).json({ message: "Erro ao atualizar senha." });
+          }
+          logAudit({
+            action: "password_reset_completed",
+            details: { user_id: reset.user_id },
+            performedBy: reset.user_id,
+          });
+          return res.json({ status: "ok" });
+        });
+      }
+    );
+  }
+);
+
+router.post(
+  "/api/auth/login",
+  [
+    body("email").isEmail().withMessage("Email inválido."),
+    body("password").notEmpty().withMessage("Senha é obrigatória."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { email, password } = req.body;
+    const ip = req.ip;
+    db.get("SELECT * FROM users WHERE email = ?", [email], (err, user) => {
+      if (err || !user) {
+        return res.status(401).json({ message: "Credenciais inválidas." });
+      }
+      if (user.locked_until) {
+        const lockedUntil = new Date(user.locked_until);
+        if (!Number.isNaN(lockedUntil.getTime()) && lockedUntil > new Date()) {
+          return res.status(403).json({ message: "Usuário bloqueado temporariamente." });
+        }
+      }
+      if (!user.is_active) {
+        return res.status(403).json({ message: "Usuário inativo." });
+      }
+
+      const valid = bcrypt.compareSync(password, user.password_hash);
+      if (!valid) {
+        return getSettings(["login_attempts", "lock_minutes"], (settings) => {
+          const maxAttempts = Number(settings.login_attempts || 5);
+          const lockMinutes = Number(settings.lock_minutes || 10);
+          db.run(
+            "INSERT INTO login_attempts (email, ip) VALUES (?, ?)",
+            [email, ip],
+            () => {
+              db.all(
+                `SELECT COUNT(*)::int as attempts
+                 FROM login_attempts
+                 WHERE email = ?
+                 AND created_at >= NOW() - ?::interval`,
+                [email, `${lockMinutes} minutes`],
+                (countErr, rows) => {
+                  const attempts = countErr ? 0 : rows?.[0]?.attempts || 0;
+                  if (attempts >= maxAttempts) {
+                    const lockedUntil = new Date(Date.now() + lockMinutes * 60 * 1000).toISOString();
+                    db.run("UPDATE users SET locked_until = ? WHERE email = ?", [lockedUntil, email]);
+                    return res.status(403).json({ message: "Usuário bloqueado por tentativas." });
+                  }
+                  return res.status(401).json({ message: "Credenciais inválidas." });
+                }
+              );
+            }
+          );
+        });
+      }
+
+      const token = jwt.sign(
+        { id: user.id, name: user.name, email: user.email, role: user.role },
+        JWT_SECRET,
+        { expiresIn: "8h" }
+      );
+      db.run("DELETE FROM login_attempts WHERE email = ?", [email]);
+      db.run("UPDATE users SET locked_until = NULL WHERE email = ?", [email]);
+      db.run(
+        "INSERT INTO sessions (user_id, token) VALUES (?, ?)",
+        [user.id, token],
+        (sessionErr) => {
+          if (sessionErr) {
+            return res.status(500).json({ message: "Erro ao criar sessão." });
+          }
+          return res.json({ token });
+        }
+      );
+    });
+  }
+);
+
+router.get("/api/categories", authenticateToken, (req, res) => {
+  db.all("SELECT * FROM categories ORDER BY name", [], (err, rows) => {
+    if (err) {
+      return res.status(500).json({ message: "Erro ao buscar categorias." });
+    }
+    return res.json(rows);
+  });
+});
+
+router.post(
+  "/api/categories",
+  authenticateToken,
+  requireManager,
+  [body("name").trim().notEmpty().withMessage("Nome é obrigatório.")],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { name, description = "" } = req.body;
+    db.get(
+      "INSERT INTO categories (name, description) VALUES (?, ?) RETURNING id",
+      [name, description],
+      (err, row) => {
+        if (err) {
+          return res.status(400).json({ message: "Categoria já cadastrada." });
+        }
+        return res.status(201).json({ id: row.id });
+      }
+    );
+  }
+);
+
+router.get("/api/suppliers", authenticateToken, requireManager, (req, res) => {
+  db.all("SELECT * FROM suppliers ORDER BY name", [], (err, rows) => {
+    if (err) {
+      return res.status(500).json({ message: "Erro ao buscar fornecedores." });
+    }
+    return res.json(rows);
+  });
+});
+
+router.post(
+  "/api/suppliers",
+  authenticateToken,
+  requireManager,
+  [
+    body("name").trim().notEmpty().withMessage("Nome é obrigatório."),
+    body("email").optional().isEmail().withMessage("Email inválido."),
+    body("phone")
+      .optional()
+      .matches(/^[0-9()+\-\s]{6,20}$/)
+      .withMessage("Telefone inválido."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { name, contact = "", phone = "", email = "" } = req.body;
+
+    db.get(
+      "INSERT INTO suppliers (name, contact, phone, email) VALUES (?, ?, ?, ?) RETURNING id",
+      [name, contact, phone, email],
+      (err, row) => {
+        if (err) {
+          return res.status(400).json({ message: "Erro ao cadastrar fornecedor." });
+        }
+        return res.status(201).json({ id: row.id });
+      }
+    );
+  }
+);
+
+router.get("/api/products", authenticateToken, (req, res) => {
+  db.all(
+    `SELECT products.*, categories.name AS category_name, suppliers.name AS supplier_name
+     FROM products
+     LEFT JOIN categories ON categories.id = products.category_id
+     LEFT JOIN suppliers ON suppliers.id = products.supplier_id
+     ORDER BY products.created_at DESC`,
+    [],
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao buscar produtos." });
+      }
+      return res.json(rows);
+    }
+  );
+});
+
+router.post(
+  "/api/products",
+  authenticateToken,
+  requireManager,
+  [
+    body("name").trim().notEmpty().withMessage("Nome é obrigatório."),
+    body("sku").trim().notEmpty().withMessage("SKU é obrigatório."),
+    body("unit_type").trim().notEmpty().withMessage("Unidade é obrigatória."),
+    body("price").isFloat({ min: 0 }).withMessage("Preço inválido."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const payload = req.body;
+    db.get(
+      `INSERT INTO products
+       (name, sku, unit_type, price, current_stock, min_stock, max_stock, category_id, supplier_id, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      [
+        payload.name,
+        payload.sku,
+        payload.unit_type,
+        payload.price,
+        payload.current_stock || 0,
+        payload.min_stock || 0,
+        payload.max_stock || 0,
+        payload.category_id || null,
+        payload.supplier_id || null,
+        payload.expires_at || null,
+      ],
+      (err, row) => {
+        if (err) {
+          return res.status(400).json({ message: "Erro ao cadastrar produto." });
+        }
+        return res.status(201).json({ id: row.id });
+      }
+    );
+  }
+);
+
+router.post(
+  "/api/stock/loss",
+  authenticateToken,
+  [
+    body("product_id").isInt({ min: 1 }).withMessage("Produto inválido."),
+    body("quantity").isInt({ min: 1 }).withMessage("Quantidade inválida."),
+    body("reason").trim().notEmpty().withMessage("Motivo é obrigatório."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { product_id, quantity, reason } = req.body;
+
+    return getSettings(["max_losses"], (settings) => {
+      const maxLosses = Number(settings.max_losses || 0);
+      if (maxLosses > 0 && quantity > maxLosses) {
+        return verifyApprovalToken(req.headers["x-approval-token"], "stock_loss", (error) => {
+          if (error) {
+            return res.status(error.status).json({ message: error.message });
+          }
+          return saveLoss();
+        });
+      }
+      return saveLoss();
+    });
+
+    function saveLoss() {
+      runWithTransaction((tx, finish) => {
+        tx.get("SELECT * FROM products WHERE id = ?", [product_id], (err, product) => {
+          if (err) {
+            finish(err);
+            return;
+          }
+          if (!product) {
+            finish({ status: 404, message: "Produto não encontrado." });
+            return;
+          }
+          if (product.current_stock < quantity) {
+            finish({ status: 400, message: "Estoque insuficiente." });
+            return;
+          }
+
+          const nextStock = product.current_stock - quantity;
+          tx.run(
+            "UPDATE products SET current_stock = ? WHERE id = ?",
+            [nextStock, product_id],
+            (updateErr) => {
+              if (updateErr) {
+                finish(updateErr);
+                return;
+              }
+              tx.run(
+                "INSERT INTO stock_losses (product_id, quantity, reason, reported_by) VALUES (?, ?, ?, ?)",
+                [product_id, quantity, reason, req.user.id],
+                (lossErr) => {
+                  if (lossErr) {
+                    finish(lossErr);
+                    return;
+                  }
+                  tx.run(
+                    "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
+                    [product_id, "loss", -Number(quantity), reason, req.user.id],
+                    (movementErr) => {
+                      if (movementErr) {
+                        finish(movementErr);
+                        return;
+                      }
+                      finish(null);
+                    }
+                  );
+                }
+              );
+            }
+          );
+        });
+      }, (transactionErr) => {
+        if (transactionErr) {
+          if (transactionErr.status) {
+            return res.status(transactionErr.status).json({ message: transactionErr.message });
+          }
+          return res.status(500).json({ message: "Erro ao registrar perda." });
+        }
+        logAudit({
+          action: "stock_loss",
+          details: { product_id, quantity, reason },
+          performedBy: req.user.id,
+        });
+        return res.status(201).json({ status: "ok" });
+      });
+    }
+  }
+);
+
+router.post(
+  "/api/stock/adjust",
+  authenticateToken,
+  requireSupervisor,
+  [
+    body("product_id").isInt({ min: 1 }).withMessage("Produto inválido."),
+    body("delta").isInt().withMessage("Delta inválido."),
+    body("reason").trim().notEmpty().withMessage("Motivo é obrigatório."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    const { product_id, delta, reason } = req.body;
+
+    return getSettings(["max_stock_adjust"], (settings) => {
+      const maxStockAdjust = Number(settings.max_stock_adjust || 0);
+      if (maxStockAdjust > 0 && Math.abs(Number(delta)) > maxStockAdjust) {
+        return verifyApprovalToken(req.headers["x-approval-token"], "stock_adjust", (error) => {
+          if (error) {
+            return res.status(error.status).json({ message: error.message });
+          }
+          return saveAdjustment();
+        });
+      }
+      return saveAdjustment();
+    });
+
+    function saveAdjustment() {
+      runWithTransaction((tx, finish) => {
+        tx.get("SELECT * FROM products WHERE id = ?", [product_id], (err, product) => {
+          if (err) {
+            finish(err);
+            return;
+          }
+          if (!product) {
+            finish({ status: 404, message: "Produto não encontrado." });
+            return;
+          }
+
+          const nextStock = product.current_stock + Number(delta);
+          if (nextStock < 0) {
+            finish({ status: 400, message: "Estoque não pode ficar negativo." });
+            return;
+          }
+
+          tx.run(
+            "UPDATE products SET current_stock = ? WHERE id = ?",
+            [nextStock, product_id],
+            (updateErr) => {
+              if (updateErr) {
+                finish(updateErr);
+                return;
+              }
+              tx.run(
+                "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
+                [product_id, "adjustment", delta, reason, req.user.id],
+                (movementErr) => {
+                  if (movementErr) {
+                    finish(movementErr);
+                    return;
+                  }
+                  finish(null);
+                }
+              );
+            }
+          );
+        });
+      }, (transactionErr) => {
+        if (transactionErr) {
+          if (transactionErr.status) {
+            return res.status(transactionErr.status).json({ message: transactionErr.message });
+          }
+          return res.status(500).json({ message: "Erro ao ajustar estoque." });
+        }
+        logAudit({
+          action: "stock_adjust",
+          details: { product_id, delta, reason },
+          performedBy: req.user.id,
+        });
+        return res.status(201).json({ status: "ok" });
+      });
+    }
+  }
+);
+
+router.post(
+  "/api/stock/move",
+  authenticateToken,
+  [
+    body("product_id").isInt({ min: 1 }).withMessage("Produto inválido."),
+    body("quantity").isInt({ min: 1 }).withMessage("Quantidade inválida."),
+    body("type").isIn(["inbound", "outbound"]).withMessage("Tipo inválido."),
+    body("reason").trim().notEmpty().withMessage("Motivo é obrigatório."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    const { product_id, quantity, type, reason } = req.body;
+
+    runWithTransaction((tx, finish) => {
+      tx.get("SELECT * FROM products WHERE id = ?", [product_id], (err, product) => {
+        if (err) {
+          finish(err);
+          return;
+        }
+        if (!product) {
+          finish({ status: 404, message: "Produto não encontrado." });
+          return;
+        }
+
+        const delta = type === "inbound" ? Number(quantity) : -Number(quantity);
+        const nextStock = product.current_stock + delta;
+        if (nextStock < 0) {
+          finish({ status: 400, message: "Estoque não pode ficar negativo." });
+          return;
+        }
+        tx.run(
+          "UPDATE products SET current_stock = ? WHERE id = ?",
+          [nextStock, product_id],
+          (updateErr) => {
+            if (updateErr) {
+              finish(updateErr);
+              return;
+            }
+            tx.run(
+              "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
+              [product_id, type, delta, reason, req.user.id],
+              (movementErr) => {
+                if (movementErr) {
+                  finish(movementErr);
+                  return;
+                }
+                finish(null);
+              }
+            );
+          }
+        );
+      });
+    }, (transactionErr) => {
+      if (transactionErr) {
+        if (transactionErr.status) {
+          return res.status(transactionErr.status).json({ message: transactionErr.message });
+        }
+        return res.status(500).json({ message: "Erro ao registrar movimentação." });
+      }
+      logAudit({
+        action: "stock_move",
+        details: { product_id, quantity, type, reason },
+        performedBy: req.user.id,
+      });
+      return res.status(201).json({ status: "ok" });
+    });
+  }
+);
+
+router.get("/api/stock/loss", authenticateToken, (req, res) => {
+  const limit = Number(req.query.limit || 50);
+  const safeLimit = Number.isNaN(limit) ? 50 : Math.min(Math.max(limit, 1), 200);
+  db.all(
+    `SELECT stock_losses.*, products.name AS product_name
+     FROM stock_losses
+     JOIN products ON products.id = stock_losses.product_id
+     ORDER BY stock_losses.created_at DESC
+     LIMIT ?`,
+    [safeLimit],
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao buscar perdas." });
+      }
+      return res.json(rows);
+    }
+  );
+});
+
+router.get("/api/stock/movements", authenticateToken, (req, res) => {
+  const limit = Number(req.query.limit || 50);
+  const safeLimit = Number.isNaN(limit) ? 50 : Math.min(Math.max(limit, 1), 200);
+  const productId = req.query.product_id ? Number(req.query.product_id) : null;
+
+  const where = productId ? "WHERE stock_movements.product_id = ?" : "";
+  const params = productId ? [productId, safeLimit] : [safeLimit];
+
+  db.all(
+    `SELECT stock_movements.*, products.name AS product_name
+     FROM stock_movements
+     JOIN products ON products.id = stock_movements.product_id
+     ${where}
+     ORDER BY stock_movements.created_at DESC
+     LIMIT ?`,
+    params,
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao buscar movimentações." });
+      }
+      return res.json(rows);
+    }
+  );
+});
+
+router.get("/api/stock/restock-suggestions", authenticateToken, (req, res) => {
+  db.all(
+    `SELECT products.*, categories.name AS category_name,
+            suppliers.name AS supplier_name, suppliers.id AS supplier_id
+     FROM products
+     LEFT JOIN categories ON categories.id = products.category_id
+     LEFT JOIN suppliers ON suppliers.id = products.supplier_id
+     WHERE products.current_stock <= products.min_stock
+     ORDER BY products.current_stock ASC`,
+    [],
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao buscar sugestões." });
+      }
+      return res.json(rows);
+    }
+  );
+});
+
+router.post(
+  "/api/purchase-orders",
+  authenticateToken,
+  requireManager,
+  [
+    body("supplier_id").isInt({ min: 1 }).withMessage("Fornecedor inválido."),
+    body("items").isArray({ min: 1 }).withMessage("Itens inválidos."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { supplier_id, items } = req.body;
+
+    runWithTransaction((tx, finish) => {
+      tx.get(
+        "INSERT INTO purchase_orders (supplier_id, created_by) VALUES (?, ?) RETURNING id",
+        [supplier_id, req.user.id],
+        (err, row) => {
+          if (err) {
+            finish(err);
+            return;
+          }
+          const orderId = row.id;
+          let processed = 0;
+          items.forEach((item) => {
+            tx.run(
+              "INSERT INTO purchase_order_items (purchase_order_id, product_id, quantity) VALUES (?, ?, ?)",
+              [orderId, item.product_id, item.quantity],
+              (itemErr) => {
+                if (itemErr) {
+                  finish(itemErr);
+                  return;
+                }
+                processed += 1;
+                if (processed === items.length) {
+                  finish(null);
+                }
+              }
+            );
+          });
+        }
+      );
+    }, (transactionErr) => {
+      if (transactionErr) {
+        return res.status(500).json({ message: "Erro ao criar pedido." });
+      }
+      return res.status(201).json({ status: "ok" });
+    });
+  }
+);
+
+router.get("/api/purchase-orders", authenticateToken, requireManager, (req, res) => {
+  db.all(
+    `SELECT purchase_orders.*, suppliers.name AS supplier_name
+     FROM purchase_orders
+     LEFT JOIN suppliers ON suppliers.id = purchase_orders.supplier_id
+     ORDER BY purchase_orders.created_at DESC`,
+    [],
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao buscar pedidos." });
+      }
+      return res.json(rows);
+    }
+  );
+});
+
+router.get("/api/purchase-orders/:id/items", authenticateToken, requireManager, (req, res) => {
+  const orderId = Number(req.params.id);
+  db.all(
+    `SELECT purchase_order_items.*, products.name AS product_name
+     FROM purchase_order_items
+     JOIN products ON products.id = purchase_order_items.product_id
+     WHERE purchase_order_items.purchase_order_id = ?`,
+    [orderId],
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao buscar itens." });
+      }
+      return res.json(rows);
+    }
+  );
+});
+
+router.post(
+  "/api/purchase-orders/:id/receive",
+  authenticateToken,
+  requireManager,
+  (req, res) => {
+    const orderId = Number(req.params.id);
+    runWithTransaction((tx, finish) => {
+      tx.get("SELECT * FROM purchase_orders WHERE id = ?", [orderId], (err, order) => {
+        if (err || !order) {
+          finish({ status: 404, message: "Pedido não encontrado." });
+          return;
+        }
+        if (order.status === "received") {
+          finish({ status: 400, message: "Pedido já recebido." });
+          return;
+        }
+        tx.all(
+          "SELECT * FROM purchase_order_items WHERE purchase_order_id = ?",
+          [orderId],
+          (itemsErr, items) => {
+            if (itemsErr) {
+              finish(itemsErr);
+              return;
+            }
+            let processed = 0;
+            items.forEach((item) => {
+              tx.run(
+                "UPDATE products SET current_stock = current_stock + ? WHERE id = ?",
+                [item.quantity, item.product_id],
+                (updateErr) => {
+                  if (updateErr) {
+                    finish(updateErr);
+                    return;
+                  }
+                  tx.run(
+                    "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
+                    [item.product_id, "inbound", item.quantity, "Recebimento de pedido", req.user.id],
+                    (movementErr) => {
+                      if (movementErr) {
+                        finish(movementErr);
+                        return;
+                      }
+                      processed += 1;
+                      if (processed === items.length) {
+                        tx.run(
+                          "UPDATE purchase_orders SET status = 'received', received_at = CURRENT_TIMESTAMP WHERE id = ?",
+                          [orderId],
+                          (finalErr) => {
+                            if (finalErr) {
+                              finish(finalErr);
+                              return;
+                            }
+                            finish(null);
+                          }
+                        );
+                      }
+                    }
+                  );
+                }
+              );
+            });
+          }
+        );
+      });
+    }, (transactionErr) => {
+      if (transactionErr) {
+        return res.status(transactionErr.status || 500).json({ message: transactionErr.message || "Erro ao receber pedido." });
+      }
+      logAudit({
+        action: "purchase_order_received",
+        details: { id: orderId },
+        performedBy: req.user.id,
+      });
+      return res.json({ status: "ok" });
+    });
+  }
+);
+
+router.get("/api/discounts", authenticateToken, requireManager, (req, res) => {
+  db.all("SELECT * FROM discounts ORDER BY created_at DESC", [], (err, rows) => {
+    if (err) {
+      return res.status(500).json({ message: "Erro ao buscar descontos." });
+    }
+    return res.json(rows);
+  });
+});
+
+router.post(
+  "/api/discounts",
+  authenticateToken,
+  requireManager,
+  [
+    body("name").trim().notEmpty().withMessage("Nome é obrigatório."),
+    body("type").isIn(["percent", "fixed", "buy_x_get_y", "fixed_bundle"]).withMessage("Tipo inválido."),
+    body("value").optional().isFloat({ min: 0 }).withMessage("Valor inválido."),
+    body("min_quantity").optional().isInt({ min: 0 }).withMessage("Quantidade inválida."),
+    body("buy_quantity").optional().isInt({ min: 0 }).withMessage("Quantidade inválida."),
+    body("get_quantity").optional().isInt({ min: 0 }).withMessage("Quantidade inválida."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const payload = req.body;
+    if (payload.type === "fixed_bundle" && (!payload.buy_quantity || !payload.value)) {
+      return res.status(400).json({ message: "Quantidade e preço do combo são obrigatórios." });
+    }
+
+    return getSettings(["max_discount"], (settings) => {
+      const maxDiscount = Number(settings.max_discount || 0);
+      if (payload.type === "percent" && maxDiscount > 0 && Number(payload.value) > maxDiscount) {
+        return res.status(403).json({ message: "Desconto acima do limite permitido." });
+      }
+
+      db.get(
+        `INSERT INTO discounts (
+           name, type, value, min_quantity, buy_quantity, get_quantity, target_type, target_value,
+           days_of_week, starts_at, ends_at, starts_time, ends_time, stacking_rule, criteria, priority, active
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        [
+          payload.name,
+          payload.type,
+          payload.value,
+          payload.min_quantity || null,
+          payload.buy_quantity || null,
+          payload.get_quantity || null,
+          payload.target_type || "all",
+          payload.target_value || null,
+          Array.isArray(payload.days_of_week) ? JSON.stringify(payload.days_of_week) : payload.days_of_week,
+          payload.starts_at || null,
+          payload.ends_at || null,
+          payload.starts_time || null,
+          payload.ends_time || null,
+          payload.stacking_rule || "exclusive",
+          Array.isArray(payload.criteria) ? JSON.stringify(payload.criteria) : payload.criteria,
+          payload.priority || 0,
+          payload.active ? 1 : 0,
+        ],
+        (err, row) => {
+          if (err) {
+            return res.status(500).json({ message: "Erro ao cadastrar desconto." });
+          }
+          logAudit({
+            action: "discount_created",
+            details: { id: row.id, name: payload.name, type: payload.type, value: payload.value },
+            performedBy: req.user.id,
+          });
+          return res.status(201).json({ id: row.id });
+        }
+      );
+    });
+  }
+);
+
+router.put(
+  "/api/discounts/:id",
+  authenticateToken,
+  requireManager,
+  [
+    body("name").optional().trim().notEmpty().withMessage("Nome inválido."),
+    body("type").optional().isIn(["percent", "fixed", "buy_x_get_y", "fixed_bundle"]).withMessage("Tipo inválido."),
+    body("value").optional().isFloat({ min: 0 }).withMessage("Valor inválido."),
+    body("min_quantity").optional().isInt({ min: 0 }).withMessage("Quantidade inválida."),
+    body("buy_quantity").optional().isInt({ min: 0 }).withMessage("Quantidade inválida."),
+    body("get_quantity").optional().isInt({ min: 0 }).withMessage("Quantidade inválida."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    const discountId = Number(req.params.id);
+
+    db.get("SELECT * FROM discounts WHERE id = ?", [discountId], (err, discount) => {
+      if (err || !discount) {
+        return res.status(404).json({ message: "Desconto não encontrado." });
+      }
+
+      const payload = req.body || {};
+      const updated = {
+        name: payload.name ?? discount.name,
+        type: payload.type ?? discount.type,
+        value: payload.value ?? discount.value,
+        min_quantity: payload.min_quantity ?? discount.min_quantity,
+        buy_quantity: payload.buy_quantity ?? discount.buy_quantity,
+        get_quantity: payload.get_quantity ?? discount.get_quantity,
+        target_type: payload.target_type ?? discount.target_type,
+        target_value: payload.target_value ?? discount.target_value,
+        days_of_week: payload.days_of_week ?? discount.days_of_week,
+        starts_at: payload.starts_at ?? discount.starts_at,
+        ends_at: payload.ends_at ?? discount.ends_at,
+        starts_time: payload.starts_time ?? discount.starts_time,
+        ends_time: payload.ends_time ?? discount.ends_time,
+        stacking_rule: payload.stacking_rule ?? discount.stacking_rule,
+        criteria: payload.criteria ?? discount.criteria,
+        priority: payload.priority ?? discount.priority,
+        active: typeof payload.active === "undefined" ? discount.active : payload.active ? 1 : 0,
+      };
+
+      if (updated.type === "fixed_bundle" && (!updated.buy_quantity || !updated.value)) {
+        return res.status(400).json({ message: "Quantidade e preço do combo são obrigatórios." });
+      }
+
+      return getSettings(["max_discount"], (settings) => {
+        const maxDiscount = Number(settings.max_discount || 0);
+        if (updated.type === "percent" && maxDiscount > 0 && Number(updated.value) > maxDiscount) {
+          return res.status(403).json({ message: "Desconto acima do limite permitido." });
+        }
+
+        db.run(
+          `UPDATE discounts
+           SET name = ?, type = ?, value = ?, min_quantity = ?, buy_quantity = ?, get_quantity = ?,
+               target_type = ?, target_value = ?, days_of_week = ?, starts_at = ?, ends_at = ?,
+               starts_time = ?, ends_time = ?, stacking_rule = ?, criteria = ?, priority = ?, active = ?
+           WHERE id = ?`,
+          [
+            updated.name,
+            updated.type,
+            updated.value,
+            updated.min_quantity,
+            updated.buy_quantity,
+            updated.get_quantity,
+            updated.target_type,
+            updated.target_value,
+            Array.isArray(updated.days_of_week) ? JSON.stringify(updated.days_of_week) : updated.days_of_week,
+            updated.starts_at,
+            updated.ends_at,
+            updated.starts_time,
+            updated.ends_time,
+            updated.stacking_rule,
+            Array.isArray(updated.criteria) ? JSON.stringify(updated.criteria) : updated.criteria,
+            updated.priority,
+            updated.active,
+            discountId,
+          ],
+          (updateErr) => {
+            if (updateErr) {
+              return res.status(500).json({ message: "Erro ao atualizar desconto." });
+            }
+            logAudit({
+              action: "discount_updated",
+              details: { id: discountId, name: updated.name, type: updated.type, value: updated.value },
+              performedBy: req.user.id,
+            });
+            return res.json({ id: discountId });
+          }
+        );
+      });
+    });
+  }
+);
+
+router.post(
+  "/api/sales",
+  authenticateToken,
+  [
+    body("product_id").isInt({ min: 1 }).withMessage("Produto inválido."),
+    body("quantity").isInt({ min: 1 }).withMessage("Quantidade inválida."),
+    body("payment_method").trim().notEmpty().withMessage("Pagamento é obrigatório."),
+    body("discount_id").optional().isInt({ min: 1 }).withMessage("Desconto inválido."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { product_id, quantity, payment_method, discount_id = null } = req.body;
+    let responsePayload = null;
+    let responseStatus = 201;
+
+    runWithTransaction((tx, finish) => {
+      tx.get("SELECT * FROM products WHERE id = ?", [product_id], (err, product) => {
+        if (err) {
+          finish(err);
+          return;
+        }
+        if (!product) {
+          finish({ status: 404, message: "Produto não encontrado." });
+          return;
+        }
+        if (product.current_stock < quantity) {
+          finish({ status: 400, message: "Estoque insuficiente." });
+          return;
+        }
+
+        const total = Number(product.price) * Number(quantity);
+        const applySale = (discount, discountAmount) => {
+          const nextStock = product.current_stock - quantity;
+          const finalTotal = Math.max(total - discountAmount, 0);
+
+          tx.run(
+            "UPDATE products SET current_stock = ? WHERE id = ?",
+            [nextStock, product_id],
+            (updateErr) => {
+              if (updateErr) {
+                finish(updateErr);
+                return;
+              }
+
+              tx.get(
+                `INSERT INTO sales (product_id, quantity, total, discount_id, discount_amount, final_total, payment_method, sold_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+                [
+                  product_id,
+                  quantity,
+                  total,
+                  discount?.id || null,
+                  discountAmount,
+                  finalTotal,
+                  payment_method,
+                  req.user.id,
+                ],
+                (saleErr, row) => {
+                  if (saleErr) {
+                    finish(saleErr);
+                    return;
+                  }
+                  tx.run(
+                    "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
+                    [product_id, "sale", -Number(quantity), "Venda PDV", req.user.id],
+                    (movementErr) => {
+                      if (movementErr) {
+                        finish(movementErr);
+                        return;
+                      }
+                      responsePayload = {
+                        id: row.id,
+                        total,
+                        discount_amount: discountAmount,
+                        final_total: finalTotal,
+                      };
+                      finish(null);
+                    }
+                  );
+                }
+              );
+            }
+          );
+        };
+
+        if (!discount_id) {
+          applySale(null, 0);
+          return;
+        }
+
+        tx.get("SELECT * FROM discounts WHERE id = ? AND active = 1", [discount_id], (discountErr, discount) => {
+          if (discountErr) {
+            finish(discountErr);
+            return;
+          }
+          if (!discount) {
+            finish({ status: 400, message: "Desconto inválido." });
+            return;
+          }
+
+          let discountAmount = 0;
+          if (discount.type === "percent") {
+            discountAmount = total * (Number(discount.value) / 100);
+          } else if (discount.type === "fixed") {
+            discountAmount = Number(discount.value);
+          } else if (discount.type === "buy_x_get_y") {
+            const buyQty = Number(discount.buy_quantity);
+            const getQty = Number(discount.get_quantity);
+            if (buyQty > 0 && quantity >= buyQty) {
+              discountAmount = Number(product.price) * getQty;
+            }
+          } else if (discount.type === "fixed_bundle") {
+            const bundleQty = Number(discount.buy_quantity);
+            const bundlePrice = Number(discount.value);
+            if (bundleQty > 0 && bundlePrice >= 0) {
+              const bundles = Math.floor(quantity / bundleQty);
+              const remainder = quantity % bundleQty;
+              const bundleTotal = bundles * bundlePrice;
+              const remainderTotal = remainder * Number(product.price);
+              discountAmount = total - (bundleTotal + remainderTotal);
+            }
+          }
+
+          if (discount.min_quantity && quantity < Number(discount.min_quantity)) {
+            discountAmount = 0;
+          }
+
+          if (discountAmount < 0) {
+            discountAmount = 0;
+          }
+
+          getSettings(["max_discount"], (settings) => {
+            const maxDiscount = Number(settings.max_discount || 0);
+            const discountPercent = total > 0 ? (discountAmount / total) * 100 : 0;
+            if (maxDiscount > 0 && discountPercent > maxDiscount) {
+              finish({ status: 403, message: "Desconto acima do limite permitido." });
+              return;
+            }
+            applySale(discount, discountAmount);
+          });
+        });
+      });
+    }, (transactionErr) => {
+      if (transactionErr) {
+        if (transactionErr.status) {
+          return res.status(transactionErr.status).json({ message: transactionErr.message });
+        }
+        return res.status(500).json({ message: "Erro ao registrar venda." });
+      }
+      return res.status(responseStatus).json(responsePayload);
+    });
+  }
+);
+
+router.get("/api/reports/summary", authenticateToken, (req, res) => {
+  const range = parseDateRange(req, res);
+  if (!range) {
+    return;
+  }
+  const salesFilter = buildDateFilter("sales.created_at", range);
+  db.get(
+    `SELECT SUM(final_total) AS total_sales FROM sales ${salesFilter.clause}`,
+    salesFilter.params,
+    (salesErr, salesRow) => {
+      if (salesErr) {
+        return res.status(500).json({ message: "Erro ao gerar relatório." });
+      }
+
+      const lossFilter = buildDateFilter("stock_losses.created_at", range);
+      db.get(
+        `SELECT SUM(products.price * stock_losses.quantity) AS total_losses
+         FROM stock_losses
+         JOIN products ON products.id = stock_losses.product_id
+         ${lossFilter.clause}`,
+        lossFilter.params,
+        (lossErr, lossRow) => {
+          if (lossErr) {
+            return res.status(500).json({ message: "Erro ao gerar relatório." });
+          }
+
+          db.all(
+            `SELECT id, name, current_stock, min_stock
+             FROM products
+             WHERE current_stock <= min_stock`,
+            [],
+            (stockErr, lowStockRows) => {
+              if (stockErr) {
+                return res.status(500).json({ message: "Erro ao gerar relatório." });
+              }
+
+              db.all(
+                `SELECT id, name, expires_at
+                 FROM products
+                 WHERE expires_at IS NOT NULL
+                 ORDER BY expires_at ASC
+                 LIMIT 10`,
+                [],
+                (expErr, expRows) => {
+                  if (expErr) {
+                    return res.status(500).json({ message: "Erro ao gerar relatório." });
+                  }
+
+                  return res.json({
+                    total_sales: salesRow?.total_sales || 0,
+                    total_losses: lossRow?.total_losses || 0,
+                    low_stock: lowStockRows,
+                    expiring_products: expRows,
+                  });
+                }
+              );
+            }
+          );
+        }
+      );
+    }
+  );
+});
+
+router.get("/api/audit-logs", authenticateToken, requireManager, (req, res) => {
+  db.all(
+    `SELECT audit_logs.*, users.name AS performed_by_name, approvers.name AS approved_by_name
+     FROM audit_logs
+     LEFT JOIN users ON users.id = audit_logs.performed_by
+     LEFT JOIN users AS approvers ON approvers.id = audit_logs.approved_by
+     ORDER BY audit_logs.created_at DESC
+     LIMIT 100`,
+    [],
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao buscar logs." });
+      }
+      return res.json(rows);
+    }
+  );
+});
+
+router.get("/api/reports/by-operator", authenticateToken, requireManager, (req, res) => {
+  const range = parseDateRange(req, res);
+  if (!range) {
+    return;
+  }
+  const salesFilter = buildDateFilter("sales.created_at", range);
+  db.all(
+    `SELECT users.id, users.name, SUM(sales.final_total) AS total_sales, SUM(sales.quantity) AS total_items
+     FROM sales
+     LEFT JOIN users ON users.id = sales.sold_by
+     ${salesFilter.clause}
+     GROUP BY sales.sold_by
+     ORDER BY total_sales DESC`,
+    salesFilter.params,
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao gerar relatório." });
+      }
+      return res.json(rows);
+    }
+  );
+});
+
+router.get("/api/reports/by-category", authenticateToken, requireManager, (req, res) => {
+  const range = parseDateRange(req, res);
+  if (!range) {
+    return;
+  }
+  const salesFilter = buildDateFilter("sales.created_at", range);
+  db.all(
+    `SELECT categories.name AS category, SUM(sales.final_total) AS total_sales, SUM(sales.quantity) AS total_items
+     FROM sales
+     JOIN products ON products.id = sales.product_id
+     LEFT JOIN categories ON categories.id = products.category_id
+     ${salesFilter.clause}
+     GROUP BY categories.name
+     ORDER BY total_sales DESC`,
+    salesFilter.params,
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao gerar relatório." });
+      }
+      return res.json(rows);
+    }
+  );
+});
+
+router.post(
+  "/api/approvals",
+  [
+    body("email").isEmail().withMessage("Email inválido."),
+    body("password").notEmpty().withMessage("Senha é obrigatória."),
+    body("action")
+      .isIn(["remove_item", "discount_override", "cancel_sale", "user_update", "stock_loss", "stock_adjust"])
+      .withMessage("Ação inválida."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { email, password, action, reason = "", metadata = {} } = req.body;
+    db.get("SELECT * FROM users WHERE email = ?", [email], (err, user) => {
+      if (err || !user) {
+        return res.status(401).json({ message: "Credenciais inválidas." });
+      }
+      if (!hasRole(user, "manager")) {
+        return res.status(403).json({ message: "Aprovação requer gerente ou admin." });
+      }
+      const valid = bcrypt.compareSync(password, user.password_hash);
+      if (!valid) {
+        return res.status(401).json({ message: "Credenciais inválidas." });
+      }
+
+      const token = crypto.randomBytes(16).toString("hex");
+      const tokenHash = hashToken(token);
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+      db.run(
+        `INSERT INTO approvals (token_hash, action, reason, metadata, approved_by, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [tokenHash, action, reason, JSON.stringify(metadata), user.id, expiresAt],
+        function handleInsert(err) {
+          if (err) {
+            return res.status(500).json({ message: "Erro ao registrar aprovação." });
+          }
+          logAudit({
+            action: "approval_granted",
+            details: { action, reason, metadata },
+            performedBy: user.id,
+            approvedBy: user.id,
+          });
+          return res.status(201).json({ token, expires_at: expiresAt });
+        }
+      );
+    });
+  }
+);
+
+router.post(
+  "/api/pos/remove-item",
+  authenticateToken,
+  requireApproval("remove_item"),
+  [
+    body("item").trim().notEmpty().withMessage("Item é obrigatório."),
+    body("reason").trim().notEmpty().withMessage("Motivo é obrigatório."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { item, reason } = req.body;
+    logAudit({
+      action: "remove_item",
+      details: { item, reason },
+      performedBy: req.user.id,
+      approvedBy: req.approval?.approved_by,
+    });
+    return res.json({ status: "ok" });
+  }
+);
+
+router.post(
+  "/api/pos/discount-override",
+  authenticateToken,
+  [
+    body("amount").isFloat({ min: 0 }).withMessage("Valor inválido."),
+    body("subtotal").optional().isFloat({ min: 0 }).withMessage("Subtotal inválido."),
+    body("reason").trim().notEmpty().withMessage("Motivo é obrigatório."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { amount, reason, subtotal = 0 } = req.body;
+    const baseTotal = Number(subtotal) || 0;
+    const discountPercent = baseTotal > 0 ? (Number(amount) / baseTotal) * 100 : 0;
+    return getSettings(["max_discount", "approval_threshold"], (settings) => {
+      const maxDiscount = Number(settings.max_discount || 0);
+      if ((maxDiscount > 0 || Number(settings.approval_threshold || 0) > 0) && baseTotal <= 0 && Number(amount) > 0) {
+        return res.status(400).json({ message: "Subtotal obrigatório para validar o desconto." });
+      }
+      if (maxDiscount > 0 && discountPercent > maxDiscount) {
+        return res.status(403).json({ message: "Desconto acima do limite permitido." });
+      }
+
+      const approvalThreshold = Number(settings.approval_threshold || 0);
+      const needsApproval = approvalThreshold > 0 && discountPercent >= approvalThreshold;
+      const approvalToken = req.headers["x-approval-token"];
+
+      const finalize = (approval) => {
+        logAudit({
+          action: "discount_override",
+          details: { amount, reason, subtotal: baseTotal, percent: discountPercent },
+          performedBy: req.user.id,
+          approvedBy: approval?.approved_by,
+        });
+        return res.json({ status: "ok" });
+      };
+
+      if (needsApproval) {
+        return verifyApprovalToken(approvalToken, "discount_override", (error, approval) => {
+          if (error) {
+            return res.status(error.status).json({ message: error.message });
+          }
+          return finalize(approval);
+        });
+      }
+
+      return finalize(null);
+    });
+  }
+);
+
+router.post(
+  "/api/pos/cancel-sale",
+  authenticateToken,
+  requireApproval("cancel_sale"),
+  [
+    body("reason").trim().notEmpty().withMessage("Motivo é obrigatório."),
+    body("items").isInt({ min: 0 }).withMessage("Itens inválidos."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { reason, items } = req.body;
+    logAudit({
+      action: "cancel_sale",
+      details: { reason, items },
+      performedBy: req.user.id,
+      approvedBy: req.approval?.approved_by,
+    });
+    return res.json({ status: "ok" });
+  }
+);
+
+router.get("/api/pos/devices", authenticateToken, (req, res) => {
+  db.all("SELECT * FROM pos_devices ORDER BY created_at DESC", [], (err, rows) => {
+    if (err) {
+      return res.status(500).json({ message: "Erro ao buscar dispositivos." });
+    }
+    return res.json(rows);
+  });
+});
+
+router.post(
+  "/api/pos/devices",
+  authenticateToken,
+  requireAdmin,
+  [
+    body("type").isIn(["scanner", "scale"]).withMessage("Tipo inválido."),
+    body("name").trim().notEmpty().withMessage("Nome é obrigatório."),
+    body("connection").trim().notEmpty().withMessage("Conexão é obrigatória."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { type, name, connection, config: deviceConfig = "", active = 1 } = req.body;
+
+    db.get(
+      "INSERT INTO pos_devices (type, name, connection, config, active) VALUES (?, ?, ?, ?, ?) RETURNING id",
+      [type, name, connection, JSON.stringify(deviceConfig), active ? 1 : 0],
+      (err, row) => {
+        if (err) {
+          return res.status(400).json({ message: "Erro ao cadastrar dispositivo." });
+        }
+        return res.status(201).json({ id: row.id });
+      }
+    );
+  }
+);
+
+router.get("/api/users", authenticateToken, requireAdmin, (req, res) => {
+  db.all(
+    "SELECT id, name, email, phone, role, is_active, permissions, created_at FROM users",
+    [],
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao buscar usuários." });
+      }
+      const users = rows.map((row) => ({
+        ...row,
+        permissions: row.permissions ? JSON.parse(row.permissions) : [],
+      }));
+      return res.json(users);
+    }
+  );
+});
+
+router.post(
+  "/api/users",
+  authenticateToken,
+  requireAdmin,
+  [
+    body("name").trim().notEmpty().withMessage("Nome é obrigatório."),
+    body("email").isEmail().withMessage("Email inválido."),
+    body("password").isLength({ min: 8 }).withMessage("Senha deve ter 8+ caracteres."),
+    body("role").isIn(["operator", "supervisor", "manager", "admin"]).withMessage("Perfil inválido."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { name, email, phone = "", password, role, permissions = [] } = req.body;
+    const passwordHash = bcrypt.hashSync(password, 10);
+
+    db.get(
+      "INSERT INTO users (name, email, phone, password_hash, role, permissions) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+      [name, email, phone, passwordHash, role, JSON.stringify(permissions)],
+      (err, row) => {
+        if (err) {
+          return res.status(400).json({ message: "Email já cadastrado." });
+        }
+        logAudit({ action: "user_created", details: { id: row.id, email }, performedBy: req.user.id });
+        return res.status(201).json({ id: row.id });
+      }
+    );
+  }
+);
+
+router.put(
+  "/api/users/:id",
+  authenticateToken,
+  requireAdmin,
+  [
+    body("name").optional().trim().notEmpty().withMessage("Nome inválido."),
+    body("email").optional().isEmail().withMessage("Email inválido."),
+    body("role").optional().isIn(["operator", "supervisor", "manager", "admin"]).withMessage("Perfil inválido."),
+    body("password").optional().isLength({ min: 8 }).withMessage("Senha inválida."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const userId = Number(req.params.id);
+    db.get("SELECT * FROM users WHERE id = ?", [userId], (err, user) => {
+      if (err || !user) {
+        return res.status(404).json({ message: "Usuário não encontrado." });
+      }
+
+      const payload = req.body || {};
+      const updated = {
+        name: payload.name ?? user.name,
+        email: payload.email ?? user.email,
+        phone: payload.phone ?? user.phone,
+        role: payload.role ?? user.role,
+        is_active: typeof payload.is_active === "undefined" ? user.is_active : payload.is_active ? 1 : 0,
+        password_hash: payload.password ? bcrypt.hashSync(payload.password, 10) : user.password_hash,
+        permissions: Array.isArray(payload.permissions) ? JSON.stringify(payload.permissions) : user.permissions,
+      };
+
+      db.run(
+        "UPDATE users SET name = ?, email = ?, phone = ?, role = ?, is_active = ?, password_hash = ?, permissions = ? WHERE id = ?",
+        [
+          updated.name,
+          updated.email,
+          updated.phone,
+          updated.role,
+          updated.is_active,
+          updated.password_hash,
+          updated.permissions,
+          userId,
+        ],
+        (updateErr) => {
+          if (updateErr) {
+            return res.status(500).json({ message: "Erro ao atualizar usuário." });
+          }
+          logAudit({
+            action: "user_update",
+            details: { id: userId, email: updated.email, role: updated.role },
+            performedBy: req.user.id,
+          });
+          return res.json({ id: userId });
+        }
+      );
+    });
+  }
+);
+
+router.get("/api/sessions", authenticateToken, requireAdmin, (req, res) => {
+  const userId = req.query.user_id ? Number(req.query.user_id) : null;
+  const sql = userId
+    ? "SELECT * FROM sessions WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC"
+    : "SELECT * FROM sessions WHERE revoked_at IS NULL ORDER BY created_at DESC";
+  const params = userId ? [userId] : [];
+  db.all(sql, params, (err, rows) => {
+    if (err) {
+      return res.status(500).json({ message: "Erro ao buscar sessões." });
+    }
+    return res.json(rows);
+  });
+});
+
+router.delete("/api/sessions/:id", authenticateToken, requireAdmin, (req, res) => {
+  const sessionId = Number(req.params.id);
+  db.run(
+    "UPDATE sessions SET revoked_at = CURRENT_TIMESTAMP WHERE id = ?",
+    [sessionId],
+    (err) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao encerrar sessão." });
+      }
+      return res.json({ status: "ok" });
+    }
+  );
+});
+
+router.get("/api/settings", authenticateToken, requireAdmin, (req, res) => {
+  db.all("SELECT key, value FROM settings", [], (err, rows) => {
+    if (err) {
+      return res.status(500).json({ message: "Erro ao buscar configurações." });
+    }
+    const settings = rows.reduce((acc, row) => {
+      acc[row.key] = row.value;
+      return acc;
+    }, {});
+    return res.json(settings);
+  });
+});
+
+router.put("/api/settings", authenticateToken, requireAdmin, (req, res) => {
+  const settings = req.body || {};
+  const entries = Object.entries(settings);
+  if (!entries.length) {
+    return res.status(400).json({ message: "Nenhuma configuração enviada." });
+  }
+  db.serialize(() => {
+    entries.forEach(([key, value]) => {
+      db.run(
+        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
+        [key, String(value)]
+      );
+    });
+  });
+  return res.json({ updated: entries.length });
+});
+
+module.exports = {
+  router,
+  sendAlertNotification,
+  ALERT_SLOW_THRESHOLD_MS,
+  METRICS_ENABLED,
+  authenticateToken,
+};
