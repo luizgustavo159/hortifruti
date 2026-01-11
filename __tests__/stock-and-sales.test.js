@@ -1,7 +1,9 @@
 process.env.JWT_SECRET = "test-secret-test-secret-test-secret";
-process.env.DB_PATH = ":memory:";
+process.env.DATABASE_URL =
+  process.env.DATABASE_URL || "postgres://greenstore:greenstore@localhost:5432/greenstore_test";
 process.env.NODE_ENV = "test";
 process.env.CORS_ORIGIN = "http://localhost";
+process.env.METRICS_ENABLED = "false";
 
 const fs = require("fs");
 const path = require("path");
@@ -11,15 +13,19 @@ const jwt = require("jsonwebtoken");
 const { app, db } = require("../server");
 
 const loadSql = (file) => fs.readFileSync(path.join(__dirname, "..", "migrations", file), "utf-8");
+const migrationFiles = fs
+  .readdirSync(path.join(__dirname, "..", "migrations"))
+  .filter((file) => file.endsWith(".sql"))
+  .sort();
 
 const run = (sql, params = []) =>
   new Promise((resolve, reject) => {
-    db.run(sql, params, function onRun(err) {
+    db.get(sql, params, (err, row) => {
       if (err) {
         reject(err);
         return;
       }
-      resolve(this.lastID);
+      resolve(row?.id);
     });
   });
 
@@ -48,6 +54,8 @@ const resetDatabase = () =>
       DELETE FROM password_resets;
       DELETE FROM sessions;
       DELETE FROM login_attempts;
+      DELETE FROM request_metrics;
+      DELETE FROM alerts;
       DELETE FROM settings;
       DELETE FROM products;
       DELETE FROM categories;
@@ -67,7 +75,7 @@ const resetDatabase = () =>
 const createUserWithSession = async ({ role }) => {
   const passwordHash = bcrypt.hashSync("senha1234", 10);
   const userId = await run(
-    "INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, ?, 1)",
+    "INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, ?, 1) RETURNING id",
     [`User ${role}`, `${role}@example.com`, passwordHash, role]
   );
   const token = jwt.sign(
@@ -80,19 +88,18 @@ const createUserWithSession = async ({ role }) => {
 };
 
 const createProduct = async ({ stock, price }) => {
-  const categoryId = await run("INSERT INTO categories (name) VALUES (?)", ["Legumes"]);
+  const categoryId = await run("INSERT INTO categories (name) VALUES (?) RETURNING id", ["Legumes"]);
   const productId = await run(
     `INSERT INTO products (name, sku, unit_type, category_id, min_stock, max_stock, current_stock, price)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     ["Tomate", "SKU-001", "kg", categoryId, 0, 100, stock, price]
   );
   return { productId, categoryId };
 };
 
 beforeAll((done) => {
-  const schemaSql = loadSql("000_schema.sql");
-  const indexSql = loadSql("001_indexes.sql");
-  db.exec(`${schemaSql}\n${indexSql}`, done);
+  const sql = migrationFiles.map((file) => loadSql(file)).join("\n");
+  db.exec(sql, done);
 });
 
 beforeEach(async () => {

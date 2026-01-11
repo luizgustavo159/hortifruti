@@ -1,23 +1,20 @@
 const fs = require("fs");
 const path = require("path");
-const sqlite3 = require("sqlite3").verbose();
+const { Pool } = require("pg");
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "data", "greenstore.db");
+const DATABASE_URL = process.env.DATABASE_URL || "postgres://localhost:5432/greenstore";
 const MIGRATIONS_DIR = path.join(__dirname, "..", "migrations");
 
-const db = new sqlite3.Database(DB_PATH);
+const pool = new Pool({ connectionString: DATABASE_URL });
 
 const run = async () => {
-  db.serialize(() => {
-    db.run("PRAGMA foreign_keys = ON");
-    db.run(
-      `CREATE TABLE IF NOT EXISTS schema_migrations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        filename TEXT NOT NULL UNIQUE,
-        applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-      )`
-    );
-  });
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS schema_migrations (
+      id SERIAL PRIMARY KEY,
+      filename TEXT NOT NULL UNIQUE,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`
+  );
 
   const files = fs
     .readdirSync(MIGRATIONS_DIR)
@@ -26,52 +23,40 @@ const run = async () => {
 
   for (const file of files) {
     // eslint-disable-next-line no-await-in-loop
-    await new Promise((resolve, reject) => {
-      db.get(
-        "SELECT 1 FROM schema_migrations WHERE filename = ?",
-        [file],
-        (err, row) => {
-          if (err) {
-            reject(err);
-            return;
-          }
-          if (row) {
-            resolve();
-            return;
-          }
-          const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, file), "utf-8");
-          db.exec(sql, (execErr) => {
-            if (execErr) {
-              reject(execErr);
-              return;
-            }
-            db.run(
-              "INSERT INTO schema_migrations (filename) VALUES (?)",
-              [file],
-              (insertErr) => {
-                if (insertErr) {
-                  reject(insertErr);
-                  return;
-                }
-                resolve();
-              }
-            );
-          });
-        }
-      );
-    });
+    const { rows } = await pool.query(
+      "SELECT 1 FROM schema_migrations WHERE filename = $1",
+      [file]
+    );
+    if (rows.length) {
+      // eslint-disable-next-line no-continue
+      continue;
+    }
+    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, file), "utf-8");
+    // eslint-disable-next-line no-await-in-loop
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(sql);
+      await client.query("INSERT INTO schema_migrations (filename) VALUES ($1)", [file]);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
-  db.close();
 };
 
 run()
   .then(() => {
     // eslint-disable-next-line no-console
     console.log("Migrations applied successfully.");
+    return pool.end();
   })
   .catch((error) => {
     // eslint-disable-next-line no-console
     console.error("Migration failed:", error);
     process.exitCode = 1;
-    db.close();
+    return pool.end();
   });
