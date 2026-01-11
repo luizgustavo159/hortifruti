@@ -1,7 +1,9 @@
 process.env.JWT_SECRET = "test-secret-test-secret-test-secret";
-process.env.DB_PATH = ":memory:";
+process.env.DATABASE_URL =
+  process.env.DATABASE_URL || "postgres://greenstore:greenstore@localhost:5432/greenstore_test";
 process.env.NODE_ENV = "test";
 process.env.CORS_ORIGIN = "http://localhost";
+process.env.METRICS_ENABLED = "false";
 
 const fs = require("fs");
 const path = require("path");
@@ -9,11 +11,14 @@ const request = require("supertest");
 const { app, db } = require("../server");
 
 const loadSql = (file) => fs.readFileSync(path.join(__dirname, "..", "migrations", file), "utf-8");
+const migrationFiles = fs
+  .readdirSync(path.join(__dirname, "..", "migrations"))
+  .filter((file) => file.endsWith(".sql"))
+  .sort();
 
 beforeAll((done) => {
-  const schemaSql = loadSql("000_schema.sql");
-  const indexSql = loadSql("001_indexes.sql");
-  db.exec(`${schemaSql}\n${indexSql}`, done);
+  const sql = migrationFiles.map((file) => loadSql(file)).join("\n");
+  db.exec(sql, done);
 });
 
 afterAll((done) => {
