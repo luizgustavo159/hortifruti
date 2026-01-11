@@ -20,21 +20,27 @@ const requestMetrics = {
 };
 
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret";
+let JWT_SECRET = process.env.JWT_SECRET || "";
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "data", "greenstore.db");
 const NODE_ENV = process.env.NODE_ENV || "development";
 const LOG_LEVEL = process.env.LOG_LEVEL || "info";
+const ADMIN_BOOTSTRAP_TOKEN = process.env.ADMIN_BOOTSTRAP_TOKEN || "";
+const PASSWORD_RESET_TTL_MINUTES = Number(process.env.PASSWORD_RESET_TTL_MINUTES || 30);
 
-if (NODE_ENV === "production") {
-  if (!process.env.JWT_SECRET || process.env.JWT_SECRET === "change-this-secret") {
+if (!JWT_SECRET) {
+  if (NODE_ENV === "development") {
+    JWT_SECRET = "development-secret";
+    // eslint-disable-next-line no-console
+    console.warn("JWT_SECRET não configurado. Usando segredo temporário apenas para desenvolvimento.");
+  } else {
     throw new Error("JWT_SECRET inválido. Configure um segredo forte para produção.");
   }
-  if (process.env.JWT_SECRET.length < 32) {
-    throw new Error("JWT_SECRET deve ter ao menos 32 caracteres.");
-  }
-  if (process.env.CORS_ORIGIN === "*") {
-    throw new Error("CORS_ORIGIN não pode ser '*' em produção.");
-  }
+} else if (JWT_SECRET.length < 32 && NODE_ENV !== "development") {
+  throw new Error("JWT_SECRET deve ter ao menos 32 caracteres.");
+}
+
+if (NODE_ENV !== "development" && process.env.CORS_ORIGIN === "*") {
+  throw new Error("CORS_ORIGIN não pode ser '*' fora de desenvolvimento.");
 }
 
 const db = new sqlite3.Database(DB_PATH);
@@ -44,279 +50,18 @@ db.serialize(() => {
   db.run("PRAGMA synchronous = NORMAL");
 });
 
-const initializeDatabase = () => {
-  db.serialize(() => {
-    db.run(
-      `CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        email TEXT NOT NULL UNIQUE,
-        password_hash TEXT NOT NULL,
-        role TEXT NOT NULL DEFAULT 'operator',
-        is_active INTEGER NOT NULL DEFAULT 1,
-        permissions TEXT,
-        locked_until TEXT,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-      )`
-    );
-
-    db.run(
-      `CREATE TABLE IF NOT EXISTS categories (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        description TEXT,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-      )`
-    );
-
-    db.run(
-      `CREATE TABLE IF NOT EXISTS suppliers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        contact TEXT,
-        phone TEXT,
-        email TEXT,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-      )`
-    );
-
-    db.run(
-      `CREATE TABLE IF NOT EXISTS products (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        sku TEXT NOT NULL UNIQUE,
-        unit_type TEXT NOT NULL,
-        supplier_id INTEGER,
-        category_id INTEGER,
-        min_stock INTEGER NOT NULL DEFAULT 0,
-        max_stock INTEGER NOT NULL DEFAULT 0,
-        current_stock INTEGER NOT NULL DEFAULT 0,
-        price REAL NOT NULL DEFAULT 0,
-        expires_at TEXT,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(supplier_id) REFERENCES suppliers(id),
-        FOREIGN KEY(category_id) REFERENCES categories(id)
-      )`
-    );
-
-    db.run(
-      `CREATE TABLE IF NOT EXISTS stock_movements (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product_id INTEGER NOT NULL,
-        type TEXT NOT NULL,
-        delta REAL NOT NULL,
-        reason TEXT,
-        performed_by INTEGER,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(product_id) REFERENCES products(id),
-        FOREIGN KEY(performed_by) REFERENCES users(id)
-      )`
-    );
-
-    db.all("PRAGMA table_info(products)", [], (err, rows) => {
-      if (err) {
-        return;
-      }
-      const hasSupplier = rows.some((row) => row.name === "supplier_id");
-      if (!hasSupplier) {
-        db.run("ALTER TABLE products ADD COLUMN supplier_id INTEGER");
-      }
-    });
-
-    db.run(
-      `CREATE TABLE IF NOT EXISTS purchase_orders (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        supplier_id INTEGER,
-        status TEXT NOT NULL DEFAULT 'pending',
-        created_by INTEGER,
-        received_at TEXT,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(supplier_id) REFERENCES suppliers(id),
-        FOREIGN KEY(created_by) REFERENCES users(id)
-      )`
-    );
-
-    db.run(
-      `CREATE TABLE IF NOT EXISTS purchase_order_items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        order_id INTEGER NOT NULL,
-        product_id INTEGER NOT NULL,
-        quantity REAL NOT NULL,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(order_id) REFERENCES purchase_orders(id),
-        FOREIGN KEY(product_id) REFERENCES products(id)
-      )`
-    );
-
-    db.run(
-      `CREATE TABLE IF NOT EXISTS discounts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        type TEXT NOT NULL,
-        value REAL NOT NULL DEFAULT 0,
-        min_quantity INTEGER NOT NULL DEFAULT 0,
-        buy_quantity INTEGER NOT NULL DEFAULT 0,
-        get_quantity INTEGER NOT NULL DEFAULT 0,
-        target_type TEXT DEFAULT 'all',
-        target_value TEXT,
-        days_of_week TEXT,
-        starts_at TEXT,
-        ends_at TEXT,
-        starts_time TEXT,
-        ends_time TEXT,
-        stacking_rule TEXT,
-        criteria TEXT,
-        priority INTEGER NOT NULL DEFAULT 0,
-        active INTEGER NOT NULL DEFAULT 1,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-      )`
-    );
-
-    db.run(
-      `CREATE TABLE IF NOT EXISTS sales (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product_id INTEGER NOT NULL,
-        quantity INTEGER NOT NULL,
-        total REAL NOT NULL,
-        discount_id INTEGER,
-        discount_amount REAL NOT NULL DEFAULT 0,
-        final_total REAL NOT NULL DEFAULT 0,
-        payment_method TEXT NOT NULL,
-        sold_by INTEGER,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(product_id) REFERENCES products(id),
-        FOREIGN KEY(sold_by) REFERENCES users(id),
-        FOREIGN KEY(discount_id) REFERENCES discounts(id)
-      )`
-    );
-
-    db.run(
-      `CREATE TABLE IF NOT EXISTS stock_losses (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product_id INTEGER NOT NULL,
-        quantity INTEGER NOT NULL,
-        reason TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(product_id) REFERENCES products(id)
-      )`
-    );
-
-    db.run(
-      `CREATE TABLE IF NOT EXISTS pos_devices (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT NOT NULL,
-        name TEXT NOT NULL,
-        connection TEXT NOT NULL,
-        config TEXT,
-        active INTEGER NOT NULL DEFAULT 1,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-      )`
-    );
-
-    db.run(
-      `CREATE TABLE IF NOT EXISTS approvals (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        token TEXT NOT NULL UNIQUE,
-        action TEXT NOT NULL,
-        reason TEXT,
-        metadata TEXT,
-        approved_by INTEGER NOT NULL,
-        used_at TEXT,
-        expires_at TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(approved_by) REFERENCES users(id)
-      )`
-    );
-
-    db.run(
-      `CREATE TABLE IF NOT EXISTS login_attempts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        email TEXT NOT NULL,
-        ip TEXT,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-      )`
-    );
-
-    db.run(
-      `CREATE TABLE IF NOT EXISTS sessions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        token TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        revoked_at TEXT,
-        FOREIGN KEY(user_id) REFERENCES users(id)
-      )`
-    );
-
-    db.run(
-      `CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY,
-        value TEXT,
-        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-      )`
-    );
-
-    db.run(
-      `CREATE TABLE IF NOT EXISTS audit_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        action TEXT NOT NULL,
-        details TEXT,
-        performed_by INTEGER,
-        approved_by INTEGER,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(performed_by) REFERENCES users(id),
-        FOREIGN KEY(approved_by) REFERENCES users(id)
-      )`
-    );
-  });
-  const ensureColumns = (table, columns) => {
-    db.all(`PRAGMA table_info(${table})`, [], (err, rows) => {
-      if (err) {
-        return;
-      }
-      const existing = new Set(rows.map((row) => row.name));
-      columns.forEach((column) => {
-        if (existing.has(column.name)) {
-          return;
-        }
-        db.run(`ALTER TABLE ${table} ADD COLUMN ${column.definition}`);
-      });
-    });
-  };
-
-  ensureColumns("users", [
-    { name: "is_active", definition: "is_active INTEGER NOT NULL DEFAULT 1" },
-    { name: "permissions", definition: "permissions TEXT" },
-    { name: "locked_until", definition: "locked_until TEXT" },
-  ]);
-  ensureColumns("purchase_orders", [
-    { name: "received_at", definition: "received_at TEXT" },
-  ]);
-
-  ensureColumns("discounts", [
-    { name: "target_type", definition: "target_type TEXT DEFAULT 'all'" },
-    { name: "target_value", definition: "target_value TEXT" },
-    { name: "days_of_week", definition: "days_of_week TEXT" },
-    { name: "starts_time", definition: "starts_time TEXT" },
-    { name: "ends_time", definition: "ends_time TEXT" },
-    { name: "stacking_rule", definition: "stacking_rule TEXT" },
-    { name: "criteria", definition: "criteria TEXT" },
-    { name: "priority", definition: "priority INTEGER NOT NULL DEFAULT 0" },
-  ]);
-
-  ensureColumns("sales", [
-    { name: "sold_by", definition: "sold_by INTEGER" },
-  ]);
-};
-
-initializeDatabase();
-
 app.use(helmet());
-app.use(
-  cors({
-    origin: process.env.CORS_ORIGIN || "*",
-  })
-);
+const allowedOrigins = (process.env.CORS_ORIGIN || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+if (NODE_ENV !== "development" && !allowedOrigins.length) {
+  throw new Error("CORS_ORIGIN deve ser configurado fora de desenvolvimento.");
+}
+const corsOptions = {
+  origin: NODE_ENV === "development" && !allowedOrigins.length ? "*" : allowedOrigins,
+};
+app.use(cors(corsOptions));
 app.use(express.json({ limit: "1mb" }));
 app.use((req, res, next) => {
   req.requestId = crypto.randomUUID();
@@ -394,6 +139,32 @@ const requireAdmin = requireRole("admin");
 const requireManager = requireRole("manager");
 const requireSupervisor = requireRole("supervisor");
 
+const hashToken = (token) => crypto.createHash("sha256").update(token).digest("hex");
+
+const runWithTransaction = (work, callback) => {
+  db.serialize(() => {
+    db.run("BEGIN IMMEDIATE", (beginErr) => {
+      if (beginErr) {
+        callback(beginErr);
+        return;
+      }
+      work((err) => {
+        if (err) {
+          db.run("ROLLBACK", () => callback(err));
+          return;
+        }
+        db.run("COMMIT", (commitErr) => {
+          if (commitErr) {
+            callback(commitErr);
+            return;
+          }
+          callback(null);
+        });
+      });
+    });
+  });
+};
+
 const logAudit = ({ action, details, performedBy, approvedBy }) => {
   db.run(
     "INSERT INTO audit_logs (action, details, performed_by, approved_by) VALUES (?, ?, ?, ?)",
@@ -468,9 +239,10 @@ const verifyApprovalToken = (token, action, callback) => {
     callback({ status: 401, message: "Aprovação necessária." });
     return;
   }
+  const tokenHash = hashToken(token);
   db.get(
-    "SELECT * FROM approvals WHERE token = ? AND action = ? AND used_at IS NULL",
-    [token, action],
+    "SELECT * FROM approvals WHERE token_hash = ? AND action = ? AND used_at IS NULL",
+    [tokenHash, action],
     (err, approval) => {
       if (err || !approval) {
         callback({ status: 403, message: "Aprovação inválida." });
@@ -539,6 +311,58 @@ app.post(
   }
 );
 
+app.post(
+  "/api/auth/bootstrap",
+  [
+    body("name").trim().notEmpty().withMessage("Nome é obrigatório."),
+    body("email").isEmail().withMessage("Email inválido."),
+    body("password").isLength({ min: 8 }).withMessage("Senha deve ter 8+ caracteres."),
+  ],
+  (req, res) => {
+    if (!ADMIN_BOOTSTRAP_TOKEN) {
+      return res.status(500).json({ message: "Bootstrap não configurado." });
+    }
+    const bootstrapToken = req.headers["x-bootstrap-token"];
+    if (bootstrapToken !== ADMIN_BOOTSTRAP_TOKEN) {
+      return res.status(403).json({ message: "Token de bootstrap inválido." });
+    }
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    db.get("SELECT id FROM users WHERE role = 'admin' LIMIT 1", [], (err, row) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao verificar administradores." });
+      }
+      if (row) {
+        return res.status(409).json({ message: "Administrador já configurado." });
+      }
+
+      const { name, email, password } = req.body;
+      const passwordHash = bcrypt.hashSync(password, 10);
+      const permissions = ["admin", "logs", "relatorios", "descontos", "estoque", "caixa"];
+
+      db.run(
+        "INSERT INTO users (name, email, password_hash, role, permissions) VALUES (?, ?, ?, ?, ?)",
+        [name, email, passwordHash, "admin", JSON.stringify(permissions)],
+        function handleInsert(insertErr) {
+          if (insertErr) {
+            return res.status(500).json({ message: "Erro ao criar administrador." });
+          }
+          logAudit({
+            action: "admin_bootstrap",
+            details: { user_id: this.lastID, email },
+            performedBy: this.lastID,
+            approvedBy: this.lastID,
+          });
+          return res.status(201).json({ id: this.lastID });
+        }
+      );
+    });
+  }
+);
+
 app.post("/api/auth/logout", authenticateToken, (req, res) => {
   const authHeader = req.headers.authorization;
   const token = authHeader ? authHeader.replace("Bearer ", "") : null;
@@ -556,6 +380,117 @@ app.post("/api/auth/logout", authenticateToken, (req, res) => {
     }
   );
 });
+
+app.post(
+  "/api/auth/request-password-reset",
+  [body("email").isEmail().withMessage("Email inválido.")],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    const { email } = req.body;
+    db.get("SELECT id FROM users WHERE email = ?", [email], (err, user) => {
+      if (err || !user) {
+        return res.status(200).json({ status: "ok" });
+      }
+      const token = crypto.randomBytes(20).toString("hex");
+      const tokenHash = hashToken(token);
+      const expiresAt = new Date(Date.now() + PASSWORD_RESET_TTL_MINUTES * 60 * 1000).toISOString();
+
+      db.run(
+        `INSERT INTO password_resets (user_id, token_hash, expires_at)
+         VALUES (?, ?, ?)`,
+        [user.id, tokenHash, expiresAt],
+        (insertErr) => {
+          if (insertErr) {
+            return res.status(500).json({ message: "Erro ao criar reset." });
+          }
+          logAudit({
+            action: "password_reset_requested",
+            details: { user_id: user.id },
+            performedBy: user.id,
+          });
+          return res.json({ token, expires_at: expiresAt });
+        }
+      );
+    });
+  }
+);
+
+app.post(
+  "/api/auth/reset-password",
+  [
+    body("token").trim().notEmpty().withMessage("Token é obrigatório."),
+    body("password").isLength({ min: 8 }).withMessage("Senha deve ter 8+ caracteres."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    const { token, password } = req.body;
+    const tokenHash = hashToken(token);
+    db.get(
+      "SELECT * FROM password_resets WHERE token_hash = ? AND used_at IS NULL",
+      [tokenHash],
+      (err, reset) => {
+        if (err || !reset) {
+          return res.status(400).json({ message: "Token inválido." });
+        }
+        const expiresAt = new Date(reset.expires_at);
+        if (Number.isNaN(expiresAt.getTime()) || expiresAt < new Date()) {
+          return res.status(400).json({ message: "Token expirado." });
+        }
+
+        const passwordHash = bcrypt.hashSync(password, 10);
+        runWithTransaction((finish) => {
+          db.run(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            [passwordHash, reset.user_id],
+            (updateErr) => {
+              if (updateErr) {
+                finish(updateErr);
+                return;
+              }
+              db.run(
+                "UPDATE password_resets SET used_at = CURRENT_TIMESTAMP WHERE id = ?",
+                [reset.id],
+                (resetErr) => {
+                  if (resetErr) {
+                    finish(resetErr);
+                    return;
+                  }
+                  db.run(
+                    "UPDATE sessions SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = ? AND revoked_at IS NULL",
+                    [reset.user_id],
+                    (revokeErr) => {
+                      if (revokeErr) {
+                        finish(revokeErr);
+                        return;
+                      }
+                      logAudit({
+                        action: "password_reset_completed",
+                        details: { user_id: reset.user_id },
+                        performedBy: reset.user_id,
+                      });
+                      finish(null);
+                    }
+                  );
+                }
+              );
+            }
+          );
+        }, (transactionErr) => {
+          if (transactionErr) {
+            return res.status(500).json({ message: "Erro ao resetar senha." });
+          }
+          return res.json({ status: "ok" });
+        });
+      }
+    );
+  }
+);
 
 app.post(
   "/api/users",
@@ -921,7 +856,14 @@ app.post(
   "/api/suppliers",
   authenticateToken,
   requireManager,
-  [body("name").trim().notEmpty().withMessage("Nome é obrigatório.")],
+  [
+    body("name").trim().notEmpty().withMessage("Nome é obrigatório."),
+    body("email").optional().isEmail().withMessage("Email inválido."),
+    body("phone")
+      .optional()
+      .matches(/^[0-9()+\-\s]{6,20}$/)
+      .withMessage("Telefone inválido."),
+  ],
   (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -970,6 +912,9 @@ app.post(
     body("current_stock").isInt({ min: 0 }).withMessage("Estoque inválido."),
     body("category_id").optional().isInt({ min: 1 }).withMessage("Categoria inválida."),
     body("supplier_id").optional().isInt({ min: 1 }).withMessage("Fornecedor inválido."),
+    body("min_stock").optional().isInt({ min: 0 }).withMessage("Estoque mínimo inválido."),
+    body("max_stock").optional().isInt({ min: 0 }).withMessage("Estoque máximo inválido."),
+    body("expires_at").optional().isISO8601().withMessage("Data de validade inválida."),
   ],
   (req, res) => {
     const errors = validationResult(req);
@@ -989,6 +934,10 @@ app.post(
       price = 0,
       expires_at = null,
     } = req.body;
+
+    if (Number(max_stock) && Number(min_stock) > Number(max_stock)) {
+      return res.status(400).json({ message: "Estoque mínimo não pode exceder o máximo." });
+    }
 
     db.run(
       `INSERT INTO products (name, sku, unit_type, category_id, supplier_id, min_stock, max_stock, current_stock, price, expires_at)
@@ -1046,40 +995,51 @@ app.post(
         const approvalToken = req.headers["x-approval-token"];
 
         const proceed = (approval) => {
-          const nextStock = product.current_stock - quantity;
-          db.run(
-            "UPDATE products SET current_stock = ? WHERE id = ?",
-            [nextStock, product_id],
-            (updateErr) => {
-              if (updateErr) {
-                return res.status(500).json({ message: "Erro ao atualizar estoque." });
-              }
-
-              db.run(
-                "INSERT INTO stock_losses (product_id, quantity, reason) VALUES (?, ?, ?)",
-                [product_id, quantity, reason],
-                function handleLoss(err) {
-                  if (err) {
-                    return res.status(500).json({ message: "Erro ao registrar perda." });
-                  }
-                  logStockMovement({
-                    productId: product_id,
-                    type: "loss",
-                    delta: -Number(quantity),
-                    reason,
-                    performedBy: req.user.id,
-                  });
-                  logAudit({
-                    action: "stock_loss",
-                    details: { product_id, quantity, reason, loss_value: lossValue },
-                    performedBy: req.user.id,
-                    approvedBy: approval?.approved_by,
-                  });
-                  return res.status(201).json({ id: this.lastID });
+          let createdId = null;
+          runWithTransaction((finish) => {
+            const nextStock = product.current_stock - quantity;
+            db.run(
+              "UPDATE products SET current_stock = ? WHERE id = ?",
+              [nextStock, product_id],
+              (updateErr) => {
+                if (updateErr) {
+                  finish(updateErr);
+                  return;
                 }
-              );
+
+                db.run(
+                  "INSERT INTO stock_losses (product_id, quantity, reason) VALUES (?, ?, ?)",
+                  [product_id, quantity, reason],
+                  function handleLoss(lossErr) {
+                    if (lossErr) {
+                      finish(lossErr);
+                      return;
+                    }
+                    createdId = this.lastID;
+                    logStockMovement({
+                      productId: product_id,
+                      type: "loss",
+                      delta: -Number(quantity),
+                      reason,
+                      performedBy: req.user.id,
+                    });
+                    logAudit({
+                      action: "stock_loss",
+                      details: { product_id, quantity, reason, loss_value: lossValue },
+                      performedBy: req.user.id,
+                      approvedBy: approval?.approved_by,
+                    });
+                    finish(null);
+                  }
+                );
+              }
+            );
+          }, (transactionErr) => {
+            if (transactionErr) {
+              return res.status(500).json({ message: "Erro ao registrar perda." });
             }
-          );
+            return res.status(201).json({ id: createdId });
+          });
         };
 
         if (requiresApproval) {
@@ -1121,28 +1081,36 @@ app.post(
       if (nextStock < 0) {
         return res.status(400).json({ message: "Estoque insuficiente para ajuste." });
       }
-      db.run(
-        "UPDATE products SET current_stock = ? WHERE id = ?",
-        [nextStock, product.id],
-        (updateErr) => {
-          if (updateErr) {
-            return res.status(500).json({ message: "Erro ao ajustar estoque." });
+      runWithTransaction((finish) => {
+        db.run(
+          "UPDATE products SET current_stock = ? WHERE id = ?",
+          [nextStock, product.id],
+          (updateErr) => {
+            if (updateErr) {
+              finish(updateErr);
+              return;
+            }
+            logStockMovement({
+              productId: product.id,
+              type: "adjust",
+              delta,
+              reason,
+              performedBy: req.user.id,
+            });
+            logAudit({
+              action: "stock_adjust",
+              details: { product_id: product.id, product_name: product.name, delta, reason },
+              performedBy: req.user.id,
+            });
+            finish(null);
           }
-          logStockMovement({
-            productId: product.id,
-            type: "adjust",
-            delta,
-            reason,
-            performedBy: req.user.id,
-          });
-          logAudit({
-            action: "stock_adjust",
-            details: { product_id: product.id, product_name: product.name, delta, reason },
-            performedBy: req.user.id,
-          });
-          return res.json({ id: product.id, current_stock: nextStock });
+        );
+      }, (transactionErr) => {
+        if (transactionErr) {
+          return res.status(500).json({ message: "Erro ao ajustar estoque." });
         }
-      );
+        return res.json({ id: product.id, current_stock: nextStock });
+      });
     });
   }
 );
@@ -1172,28 +1140,36 @@ app.post(
       if (nextStock < 0) {
         return res.status(400).json({ message: "Estoque insuficiente." });
       }
-      db.run(
-        "UPDATE products SET current_stock = ? WHERE id = ?",
-        [nextStock, product.id],
-        (updateErr) => {
-          if (updateErr) {
-            return res.status(500).json({ message: "Erro ao movimentar estoque." });
+      runWithTransaction((finish) => {
+        db.run(
+          "UPDATE products SET current_stock = ? WHERE id = ?",
+          [nextStock, product.id],
+          (updateErr) => {
+            if (updateErr) {
+              finish(updateErr);
+              return;
+            }
+            logStockMovement({
+              productId: product.id,
+              type,
+              delta,
+              reason,
+              performedBy: req.user.id,
+            });
+            logAudit({
+              action: type === "inbound" ? "stock_inbound" : "stock_outbound",
+              details: { product_id: product.id, product_name: product.name, delta, reason },
+              performedBy: req.user.id,
+            });
+            finish(null);
           }
-          logStockMovement({
-            productId: product.id,
-            type,
-            delta,
-            reason,
-            performedBy: req.user.id,
-          });
-          logAudit({
-            action: type === "inbound" ? "stock_inbound" : "stock_outbound",
-            details: { product_id: product.id, product_name: product.name, delta, reason },
-            performedBy: req.user.id,
-          });
-          return res.json({ id: product.id, current_stock: nextStock });
+        );
+      }, (transactionErr) => {
+        if (transactionErr) {
+          return res.status(500).json({ message: "Erro ao movimentar estoque." });
         }
-      );
+        return res.json({ id: product.id, current_stock: nextStock });
+      });
     });
   }
 );
@@ -1397,45 +1373,71 @@ app.post(
           if (itemsErr || !items.length) {
             return res.status(500).json({ message: "Itens do pedido não encontrados." });
           }
-          db.serialize(() => {
-            items.forEach((item) => {
+          runWithTransaction((finish) => {
+            let processed = 0;
+            let completed = false;
+            const finalize = (err) => {
+              if (completed) {
+                return;
+              }
+              completed = true;
+              finish(err);
+            };
+            const handleItem = (item) => {
               db.get(
                 "SELECT * FROM products WHERE id = ?",
                 [item.product_id],
                 (productErr, product) => {
                   if (productErr || !product) {
+                    finalize(productErr || new Error("Produto não encontrado."));
                     return;
                   }
                   const nextStock = Number(product.current_stock) + Number(item.quantity);
-                  db.run("UPDATE products SET current_stock = ? WHERE id = ?", [
-                    nextStock,
-                    product.id,
-                  ]);
-                  logStockMovement({
-                    productId: product.id,
-                    type: "inbound",
-                    delta: Number(item.quantity),
-                    reason: `Recebimento pedido #${orderId}`,
-                    performedBy: req.user.id,
-                  });
+                  db.run(
+                    "UPDATE products SET current_stock = ? WHERE id = ?",
+                    [nextStock, product.id],
+                    (updateErr) => {
+                      if (updateErr) {
+                        finalize(updateErr);
+                        return;
+                      }
+                      logStockMovement({
+                        productId: product.id,
+                        type: "inbound",
+                        delta: Number(item.quantity),
+                        reason: `Recebimento pedido #${orderId}`,
+                        performedBy: req.user.id,
+                      });
+                      processed += 1;
+                      if (processed === items.length) {
+                        db.run(
+                          "UPDATE purchase_orders SET status = 'received', received_at = CURRENT_TIMESTAMP WHERE id = ?",
+                          [orderId],
+                          (orderErr) => {
+                            if (orderErr) {
+                              finalize(orderErr);
+                              return;
+                            }
+                            logAudit({
+                              action: "purchase_order_received",
+                              details: { order_id: orderId },
+                              performedBy: req.user.id,
+                            });
+                            finalize(null);
+                          }
+                        );
+                      }
+                    }
+                  );
                 }
               );
-            });
-            db.run(
-              "UPDATE purchase_orders SET status = 'received', received_at = CURRENT_TIMESTAMP WHERE id = ?",
-              [orderId],
-              (updateErr) => {
-                if (updateErr) {
-                  return res.status(500).json({ message: "Erro ao receber pedido." });
-                }
-                logAudit({
-                  action: "purchase_order_received",
-                  details: { order_id: orderId },
-                  performedBy: req.user.id,
-                });
-                return res.json({ id: orderId, status: "received" });
-              }
-            );
+            };
+            items.forEach(handleItem);
+          }, (transactionErr) => {
+            if (transactionErr) {
+              return res.status(500).json({ message: "Erro ao receber pedido." });
+            }
+            return res.json({ id: orderId, status: "received" });
           });
         }
       );
@@ -1691,112 +1693,141 @@ app.post(
     }
 
     const { product_id, quantity, payment_method, discount_id = null } = req.body;
-    db.get("SELECT * FROM products WHERE id = ?", [product_id], (err, product) => {
-      if (err || !product) {
-        return res.status(404).json({ message: "Produto não encontrado." });
-      }
-      if (product.current_stock < quantity) {
-        return res.status(400).json({ message: "Estoque insuficiente." });
-      }
+    let responsePayload = null;
+    let responseStatus = 201;
 
-      const total = Number(product.price) * Number(quantity);
-      const applySale = (discount, discountAmount) => {
-        const nextStock = product.current_stock - quantity;
-        const finalTotal = Math.max(total - discountAmount, 0);
+    runWithTransaction((finish) => {
+      db.get("SELECT * FROM products WHERE id = ?", [product_id], (err, product) => {
+        if (err) {
+          finish(err);
+          return;
+        }
+        if (!product) {
+          finish({ status: 404, message: "Produto não encontrado." });
+          return;
+        }
+        if (product.current_stock < quantity) {
+          finish({ status: 400, message: "Estoque insuficiente." });
+          return;
+        }
 
-        db.run(
-          "UPDATE products SET current_stock = ? WHERE id = ?",
-          [nextStock, product_id],
-          (updateErr) => {
-            if (updateErr) {
-              return res.status(500).json({ message: "Erro ao atualizar estoque." });
-            }
+        const total = Number(product.price) * Number(quantity);
+        const applySale = (discount, discountAmount) => {
+          const nextStock = product.current_stock - quantity;
+          const finalTotal = Math.max(total - discountAmount, 0);
 
-            db.run(
-              `INSERT INTO sales (product_id, quantity, total, discount_id, discount_amount, final_total, payment_method, sold_by)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-              [
-                product_id,
-                quantity,
-                total,
-                discount?.id || null,
-                discountAmount,
-                finalTotal,
-                payment_method,
-                req.user.id,
-              ],
-              function handleSale(err) {
-                if (err) {
-                  return res.status(500).json({ message: "Erro ao registrar venda." });
-                }
-                logStockMovement({
-                  productId: product_id,
-                  type: "sale",
-                  delta: -Number(quantity),
-                  reason: "Venda PDV",
-                  performedBy: req.user.id,
-                });
-                return res.status(201).json({
-                  id: this.lastID,
-                  total,
-                  discount_amount: discountAmount,
-                  final_total: finalTotal,
-                });
+          db.run(
+            "UPDATE products SET current_stock = ? WHERE id = ?",
+            [nextStock, product_id],
+            (updateErr) => {
+              if (updateErr) {
+                finish(updateErr);
+                return;
               }
-            );
-          }
-        );
-      };
 
-      if (!discount_id) {
-        return applySale(null, 0);
-      }
+              db.run(
+                `INSERT INTO sales (product_id, quantity, total, discount_id, discount_amount, final_total, payment_method, sold_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                  product_id,
+                  quantity,
+                  total,
+                  discount?.id || null,
+                  discountAmount,
+                  finalTotal,
+                  payment_method,
+                  req.user.id,
+                ],
+                function handleSale(saleErr) {
+                  if (saleErr) {
+                    finish(saleErr);
+                    return;
+                  }
+                  logStockMovement({
+                    productId: product_id,
+                    type: "sale",
+                    delta: -Number(quantity),
+                    reason: "Venda PDV",
+                    performedBy: req.user.id,
+                  });
+                  responsePayload = {
+                    id: this.lastID,
+                    total,
+                    discount_amount: discountAmount,
+                    final_total: finalTotal,
+                  };
+                  finish(null);
+                }
+              );
+            }
+          );
+        };
 
-      return db.get("SELECT * FROM discounts WHERE id = ? AND active = 1", [discount_id], (err, discount) => {
-        if (err || !discount) {
-          return res.status(400).json({ message: "Desconto inválido." });
+        if (!discount_id) {
+          applySale(null, 0);
+          return;
         }
 
-        let discountAmount = 0;
-        if (discount.type === "percent") {
-          discountAmount = total * (Number(discount.value) / 100);
-        } else if (discount.type === "fixed") {
-          discountAmount = Number(discount.value);
-        } else if (discount.type === "buy_x_get_y") {
-          const buyQty = Number(discount.buy_quantity);
-          const getQty = Number(discount.get_quantity);
-          if (buyQty > 0 && quantity >= buyQty) {
-            discountAmount = Number(product.price) * getQty;
+        db.get("SELECT * FROM discounts WHERE id = ? AND active = 1", [discount_id], (discountErr, discount) => {
+          if (discountErr) {
+            finish(discountErr);
+            return;
           }
-        } else if (discount.type === "fixed_bundle") {
-          const bundleQty = Number(discount.buy_quantity);
-          const bundlePrice = Number(discount.value);
-          if (bundleQty > 0 && bundlePrice >= 0) {
-            const bundles = Math.floor(quantity / bundleQty);
-            const remainder = quantity % bundleQty;
-            const bundleTotal = bundles * bundlePrice;
-            const remainderTotal = remainder * Number(product.price);
-            discountAmount = total - (bundleTotal + remainderTotal);
+          if (!discount) {
+            finish({ status: 400, message: "Desconto inválido." });
+            return;
           }
-        }
 
-        if (discount.min_quantity && quantity < Number(discount.min_quantity)) {
-          discountAmount = 0;
-        }
-
-        if (discountAmount < 0) {
-          discountAmount = 0;
-        }
-
-        return getSettings(["max_discount"], (settings) => {
-          const maxDiscount = Number(settings.max_discount || 0);
-          const discountPercent = total > 0 ? (discountAmount / total) * 100 : 0;
-          if (maxDiscount > 0 && discountPercent > maxDiscount) {
-            return res.status(403).json({ message: "Desconto acima do limite permitido." });
+          let discountAmount = 0;
+          if (discount.type === "percent") {
+            discountAmount = total * (Number(discount.value) / 100);
+          } else if (discount.type === "fixed") {
+            discountAmount = Number(discount.value);
+          } else if (discount.type === "buy_x_get_y") {
+            const buyQty = Number(discount.buy_quantity);
+            const getQty = Number(discount.get_quantity);
+            if (buyQty > 0 && quantity >= buyQty) {
+              discountAmount = Number(product.price) * getQty;
+            }
+          } else if (discount.type === "fixed_bundle") {
+            const bundleQty = Number(discount.buy_quantity);
+            const bundlePrice = Number(discount.value);
+            if (bundleQty > 0 && bundlePrice >= 0) {
+              const bundles = Math.floor(quantity / bundleQty);
+              const remainder = quantity % bundleQty;
+              const bundleTotal = bundles * bundlePrice;
+              const remainderTotal = remainder * Number(product.price);
+              discountAmount = total - (bundleTotal + remainderTotal);
+            }
           }
-          return applySale(discount, discountAmount);
+
+          if (discount.min_quantity && quantity < Number(discount.min_quantity)) {
+            discountAmount = 0;
+          }
+
+          if (discountAmount < 0) {
+            discountAmount = 0;
+          }
+
+          getSettings(["max_discount"], (settings) => {
+            const maxDiscount = Number(settings.max_discount || 0);
+            const discountPercent = total > 0 ? (discountAmount / total) * 100 : 0;
+            if (maxDiscount > 0 && discountPercent > maxDiscount) {
+              finish({ status: 403, message: "Desconto acima do limite permitido." });
+              return;
+            }
+            applySale(discount, discountAmount);
+          });
         });
       });
+    }, (transactionErr) => {
+      if (transactionErr) {
+        if (transactionErr.status) {
+          return res.status(transactionErr.status).json({ message: transactionErr.message });
+        }
+        return res.status(500).json({ message: "Erro ao registrar venda." });
+      }
+      return res.status(responseStatus).json(responsePayload);
     });
   }
 );
@@ -1959,11 +1990,12 @@ app.post(
       }
 
       const token = crypto.randomBytes(16).toString("hex");
+      const tokenHash = hashToken(token);
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
       db.run(
-        `INSERT INTO approvals (token, action, reason, metadata, approved_by, expires_at)
+        `INSERT INTO approvals (token_hash, action, reason, metadata, approved_by, expires_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
-        [token, action, reason, JSON.stringify(metadata), user.id, expiresAt],
+        [tokenHash, action, reason, JSON.stringify(metadata), user.id, expiresAt],
         function handleInsert(err) {
           if (err) {
             return res.status(500).json({ message: "Erro ao registrar aprovação." });
@@ -2124,6 +2156,10 @@ app.post(
   }
 );
 
-app.listen(PORT, () => {
-  console.log(`GreenStore API rodando na porta ${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`GreenStore API rodando na porta ${PORT}`);
+  });
+}
+
+module.exports = { app, db };
