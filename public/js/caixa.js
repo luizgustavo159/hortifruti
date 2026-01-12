@@ -13,9 +13,11 @@ const weightInput = document.getElementById("weight-input");
 const scaleModeToggle = document.getElementById("scale-mode");
 const amountPaidInput = document.getElementById("amount-paid");
 const changeDueLabel = document.getElementById("change-due");
+const paymentMethodSelect = document.getElementById("payment-method");
 const finishSaleButton = document.getElementById("finish-sale");
 const cancelSaleButton = document.getElementById("cancel-sale");
 const posItemsContainer = document.querySelector(".pos-items");
+const productSearchList = document.getElementById("product-search-list");
 const summaryItems = document.getElementById("summary-items");
 const summarySubtotal = document.getElementById("summary-subtotal");
 const summaryDiscount = document.getElementById("summary-discount");
@@ -28,19 +30,22 @@ const noteModalElement = document.getElementById("noteModal");
 const noteForm = document.getElementById("note-form");
 const noteInput = document.getElementById("sale-note");
 const addNoteButton = document.getElementById("add-note");
+const deviceStatusList = document.getElementById("pos-device-status");
 
 const approvalModal = approvalModalElement
   ? new bootstrap.Modal(approvalModalElement)
   : null;
 const noteModal = noteModalElement ? new bootstrap.Modal(noteModalElement) : null;
 
-const { postJson, requestJson } = window.apiClient || {};
+const { getJson, postJson, requestJson } = window.apiClient || {};
 
 const state = {
   items: [],
   suspendedSales: [],
   discountTotal: 0,
   saleNote: "",
+  products: [],
+  productLookup: new Map(),
 };
 
 const setFeedback = (message, type = "secondary") => {
@@ -65,6 +70,13 @@ const parseCurrency = (value) =>
 const parseNumber = (value, fallback = 0) => {
   const parsed = parseCurrency(value);
   return Number.isNaN(parsed) ? fallback : parsed;
+};
+
+const normalizeKey = (value) => String(value || "").trim().toLowerCase();
+
+const isWeightUnit = (unitType) => {
+  const normalized = normalizeKey(unitType);
+  return normalized.includes("kg") || normalized.includes("quilo") || normalized.includes("grama");
 };
 
 const getItemTotal = (item) => {
@@ -114,15 +126,17 @@ const createItemElement = (item) => {
   element.dataset.unitPrice = String(item.price);
   element.dataset.quantity = String(item.quantity);
   element.dataset.weight = String(item.weight);
+  element.dataset.productId = String(item.productId || "");
   const description = item.weight > 0
-    ? `${item.weight.toFixed(3).replace(".", ",")} kg × ${formatCurrency(item.price)}`
-    : `${item.quantity} un × ${formatCurrency(item.price)}`;
+    ? `${item.weight.toFixed(3).replace(".", ",")} ${item.unitType || "kg"} × ${formatCurrency(item.price)}`
+    : `${item.quantity} ${item.unitType || "un"} × ${formatCurrency(item.price)}`;
   const statusLabel = item.status === "low" ? "Estoque baixo" : "Disponível";
   const statusClass = item.status === "low" ? "text-bg-warning" : "text-bg-secondary";
   element.innerHTML = `
     <div>
       <strong>${item.name}</strong>
       <span class="d-block text-muted">${description}</span>
+      <span class="d-block text-muted small">SKU ${item.sku || "-"}</span>
       <span class="badge ${statusClass} mt-1">${statusLabel}</span>
     </div>
     <div class="text-end">
@@ -162,7 +176,8 @@ const syncItemsFromDom = () => {
     const weight = Number(element.dataset.weight || 0);
     const statusBadge = element.querySelector(".badge");
     const status = statusBadge?.textContent?.includes("baixo") ? "low" : "ok";
-    items.push({ name, price, quantity, weight, status });
+    const sku = element.querySelector(".text-muted.small")?.textContent?.replace("SKU", "").trim() || "";
+    items.push({ name, price, quantity, weight, status, sku });
   });
   state.items = items;
   updateSummary();
@@ -194,37 +209,45 @@ const openApprovalModal = (action, metadata) => {
   approvalModal.show();
 };
 
-const quickItemCatalog = {
-  "Banana Prata": { price: 6.5, weight: 1.25, status: "low" },
-  "Tomate Italiano": { price: 8.9, weight: 1, status: "ok" },
-  "Cebola Roxa": { price: 7.4, weight: 0.8, status: "ok" },
+const buildProductLookup = (products) => {
+  const map = new Map();
+  products.forEach((product) => {
+    if (!product) {
+      return;
+    }
+    if (product.name) {
+      map.set(normalizeKey(product.name), product);
+    }
+    if (product.sku) {
+      map.set(normalizeKey(product.sku), product);
+    }
+  });
+  state.productLookup = map;
 };
 
-const barcodeCatalog = {
-  BAN001: { name: "Banana Prata", price: 6.5, status: "low" },
-  TOM001: { name: "Tomate Italiano", price: 8.9, status: "ok" },
-  CEB001: { name: "Cebola Roxa", price: 7.4, status: "ok" },
+const renderProductSearchList = () => {
+  if (!productSearchList) {
+    return;
+  }
+  productSearchList.innerHTML = "";
+  state.products.forEach((product) => {
+    const option = document.createElement("option");
+    const sku = product.sku ? `(${product.sku})` : "";
+    option.value = `${product.name} ${sku}`.trim();
+    productSearchList.appendChild(option);
+  });
 };
 
-const searchCatalog = {
-  "BANANA PRATA (PLU 4011)": { name: "Banana Prata", price: 6.5, status: "low" },
-  "TOMATE ITALIANO (PLU 3151)": { name: "Tomate Italiano", price: 8.9, status: "ok" },
-  "CEBOLA ROXA (PLU 4166)": { name: "Cebola Roxa", price: 7.4, status: "ok" },
-  "4011": { name: "Banana Prata", price: 6.5, status: "low" },
-  "3151": { name: "Tomate Italiano", price: 8.9, status: "ok" },
-  "4166": { name: "Cebola Roxa", price: 7.4, status: "ok" },
-  "BANANA PRATA": { name: "Banana Prata", price: 6.5, status: "low" },
-  "TOMATE ITALIANO": { name: "Tomate Italiano", price: 8.9, status: "ok" },
-  "CEBOLA ROXA": { name: "Cebola Roxa", price: 7.4, status: "ok" },
-};
-
-const addItem = ({ name, price, quantity, weight, status }) => {
+const addItem = ({ name, price, quantity, weight, status, unitType, sku, productId }) => {
   const item = {
     name,
     price,
     quantity,
     weight,
     status,
+    unitType,
+    sku,
+    productId,
   };
   state.items.push(item);
   const element = createItemElement(item);
@@ -309,6 +332,92 @@ const handleCancelSale = async () => {
   openApprovalModal("cancel_sale", { items: state.items.length });
 };
 
+const normalizeSaleQuantity = (item) => {
+  if (item.weight > 0) {
+    const rounded = Math.round(item.weight);
+    if (Number(item.weight).toFixed(2) !== Number(rounded).toFixed(2)) {
+      setFeedback(
+        `Peso ${item.weight.toFixed(2).replace(".", ",")} ${item.unitType || "kg"} ajustado para ${rounded}.`,
+        "warning"
+      );
+    }
+    return Math.max(rounded, 1);
+  }
+  return Math.max(Number(item.quantity || 1), 1);
+};
+
+const updateDeviceStatus = (devices = []) => {
+  if (!deviceStatusList) {
+    return;
+  }
+  deviceStatusList.innerHTML = "";
+  if (!devices.length) {
+    deviceStatusList.innerHTML = '<div class="list-group-item text-muted">Nenhum dispositivo cadastrado.</div>';
+    return;
+  }
+  devices.forEach((device) => {
+    const item = document.createElement("div");
+    item.className = "list-group-item d-flex justify-content-between align-items-center";
+    const status = device.active ? "Ativo" : "Inativo";
+    const badgeClass = device.active ? "text-bg-success" : "text-bg-secondary";
+    item.innerHTML = `
+      <div>
+        <div class="fw-semibold">${device.name}</div>
+        <div class="text-muted small">${device.type} • ${device.connection}</div>
+      </div>
+      <span class="badge ${badgeClass}">${status}</span>
+    `;
+    deviceStatusList.appendChild(item);
+  });
+};
+
+const loadDevices = async () => {
+  if (!getJson) {
+    return;
+  }
+  try {
+    const devices = await getJson("/api/pos/devices");
+    updateDeviceStatus(devices || []);
+  } catch (error) {
+    if (deviceStatusList) {
+      deviceStatusList.innerHTML =
+        '<div class="list-group-item text-danger">Erro ao carregar dispositivos.</div>';
+    }
+  }
+};
+
+const loadProducts = async () => {
+  if (!getJson) {
+    return;
+  }
+  try {
+    state.products = await getJson("/api/products");
+    buildProductLookup(state.products);
+    renderProductSearchList();
+    setFeedback("Catálogo sincronizado com o estoque.", "info");
+  } catch (error) {
+    setFeedback(error.message || "Não foi possível carregar o catálogo.", "danger");
+  }
+};
+
+const resolveProduct = (inputValue) => {
+  const normalized = normalizeKey(inputValue);
+  if (!normalized) {
+    return null;
+  }
+  if (state.productLookup.has(normalized)) {
+    return state.productLookup.get(normalized);
+  }
+  const match = normalized.match(/\(([^)]+)\)$/);
+  if (match) {
+    const sku = normalizeKey(match[1]);
+    if (state.productLookup.has(sku)) {
+      return state.productLookup.get(sku);
+    }
+  }
+  return null;
+};
+
 document.querySelectorAll(".js-remove-item").forEach((button) => {
   button.addEventListener("click", () => {
     const item = button.dataset.item || "Item";
@@ -385,25 +494,36 @@ barcodeInput?.addEventListener("keydown", (event) => {
     return;
   }
   event.preventDefault();
-  const inputValue = barcodeInput.value.trim().toUpperCase();
+  const inputValue = barcodeInput.value.trim();
   if (!inputValue) {
     setFeedback("Informe o código, PLU ou nome do produto.", "warning");
     return;
   }
-  const product = barcodeCatalog[inputValue] || searchCatalog[inputValue];
+  const product = resolveProduct(inputValue);
   if (!product) {
     setFeedback("Produto não encontrado no catálogo rápido.", "warning");
     return;
   }
   const quantity = Math.max(parseNumber(quantityInput?.value || "1", 1), 1);
   const weight = Math.max(parseNumber(weightInput?.value || "0"), 0);
-  const selectedWeight = scaleModeToggle?.checked ? weight || product.weight || 1 : weight;
+  const usesWeight = isWeightUnit(product.unit_type);
+  const selectedWeight = usesWeight
+    ? scaleModeToggle?.checked
+      ? weight || 1
+      : weight > 0
+        ? weight
+        : 0
+    : 0;
+  const status = product.current_stock <= product.min_stock ? "low" : "ok";
   addItem({
     name: product.name,
-    price: product.price,
-    quantity,
+    price: Number(product.price || 0),
+    quantity: usesWeight ? 1 : quantity,
     weight: selectedWeight,
-    status: product.status,
+    status,
+    unitType: product.unit_type,
+    sku: product.sku,
+    productId: product.id,
   });
   barcodeInput.value = "";
   if (quantityInput) {
@@ -417,18 +537,30 @@ barcodeInput?.addEventListener("keydown", (event) => {
 quickItemButtons.forEach((button) => {
   button.addEventListener("click", () => {
     const name = button.dataset.quickItem;
-    const product = quickItemCatalog[name];
+    const product = resolveProduct(name);
     if (!product) {
+      setFeedback("Produto não encontrado no catálogo sincronizado.", "warning");
       return;
     }
-    const weight = Math.max(parseNumber(weightInput?.value || product.weight), 0);
-    const selectedWeight = scaleModeToggle?.checked ? weight : product.weight;
+    const weight = Math.max(parseNumber(weightInput?.value || "0"), 0);
+    const usesWeight = isWeightUnit(product.unit_type);
+    const selectedWeight = usesWeight
+      ? scaleModeToggle?.checked
+        ? weight || 1
+        : weight > 0
+          ? weight
+          : 0
+      : 0;
+    const status = product.current_stock <= product.min_stock ? "low" : "ok";
     addItem({
-      name,
-      price: product.price,
-      quantity: 1,
+      name: product.name,
+      price: Number(product.price || 0),
+      quantity: usesWeight ? 1 : 1,
       weight: selectedWeight,
-      status: product.status,
+      status,
+      unitType: product.unit_type,
+      sku: product.sku,
+      productId: product.id,
     });
   });
 });
@@ -486,11 +618,39 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-finishSaleButton?.addEventListener("click", () => {
-  setFeedback("Venda finalizada. Pronto para próxima leitura.", "success");
-  clearSale();
+finishSaleButton?.addEventListener("click", async () => {
+  if (!postJson) {
+    setFeedback("API indisponível para registrar a venda.", "danger");
+    return;
+  }
+  if (state.items.length === 0) {
+    setFeedback("Nenhum item na venda.", "warning");
+    return;
+  }
+  const paymentMethod = paymentMethodSelect?.value || "Dinheiro";
+  try {
+    setFeedback("Registrando venda...", "info");
+    for (const item of state.items) {
+      if (!item.productId) {
+        throw new Error(`Produto sem cadastro: ${item.name}`);
+      }
+      const quantity = normalizeSaleQuantity(item);
+      await postJson("/api/sales", {
+        product_id: item.productId,
+        quantity,
+        payment_method: paymentMethod,
+      });
+    }
+    setFeedback("Venda finalizada e registrada no estoque.", "success");
+    clearSale();
+    loadProducts();
+  } catch (error) {
+    setFeedback(error.message || "Erro ao registrar venda.", "danger");
+  }
 });
 
 focusBarcode();
 syncItemsFromDom();
 renderSuspendedSales();
+loadProducts();
+loadDevices();

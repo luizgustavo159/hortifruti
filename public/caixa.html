@@ -87,11 +87,7 @@
                     placeholder="Escaneie o código ou digite nome/PLU"
                     autofocus
                   />
-                  <datalist id="product-search-list">
-                    <option value="Banana Prata (PLU 4011)"></option>
-                    <option value="Tomate Italiano (PLU 3151)"></option>
-                    <option value="Cebola Roxa (PLU 4166)"></option>
-                  </datalist>
+                  <datalist id="product-search-list"></datalist>
                   <div class="pos-shortcuts">
                     <span class="text-muted small">Atalhos rápidos:</span>
                     <div class="pos-shortcut-actions">
@@ -116,34 +112,7 @@
                   <input class="form-control" id="weight-input" placeholder="0,000" />
                 </div>
               </div>
-              <div class="pos-items">
-                <div class="pos-item pos-item--latest" data-unit-price="6.5" data-quantity="1" data-weight="2.34">
-                  <div>
-                    <strong>Banana Prata</strong>
-                    <span class="d-block text-muted">2,340 kg × R$ 6,50</span>
-                    <span class="badge text-bg-warning mt-1">Estoque baixo</span>
-                  </div>
-                  <div class="text-end">
-                    <strong>R$ 15,21</strong>
-                    <button class="btn btn-link text-danger btn-sm js-remove-item" data-item="Banana Prata">
-                      Remover
-                    </button>
-                  </div>
-                </div>
-                <div class="pos-item" data-unit-price="8.9" data-quantity="1" data-weight="1">
-                  <div>
-                    <strong>Tomate Italiano</strong>
-                    <span class="d-block text-muted">1,000 kg × R$ 8,90</span>
-                    <span class="badge text-bg-secondary mt-1">Disponível</span>
-                  </div>
-                  <div class="text-end">
-                    <strong>R$ 8,90</strong>
-                    <button class="btn btn-link text-danger btn-sm js-remove-item" data-item="Tomate Italiano">
-                      Remover
-                    </button>
-                  </div>
-                </div>
-              </div>
+              <div class="pos-items"></div>
               <div class="pos-actions">
                 <button class="btn btn-outline-secondary" id="suspend-sale">Suspender venda</button>
                 <button class="btn btn-outline-secondary" id="add-note">Adicionar observação</button>
@@ -159,16 +128,22 @@
             </div>
           </div>
           <div class="col-lg-4">
+            <div class="form-card mb-4">
+              <h5 class="mb-2">Dispositivos do caixa</h5>
+              <div class="list-group list-group-flush" id="pos-device-status">
+                <div class="list-group-item text-muted">Carregando dispositivos...</div>
+              </div>
+            </div>
             <div class="card shadow-sm border-0 pos-summary">
               <div class="card-body">
                 <h5 class="card-title">Resumo da venda</h5>
                 <div class="d-flex justify-content-between">
                   <span>Itens</span>
-                  <strong id="summary-items">2</strong>
+                  <strong id="summary-items">0</strong>
                 </div>
                 <div class="d-flex justify-content-between">
                   <span>Subtotal</span>
-                  <strong id="summary-subtotal">R$ 24,11</strong>
+                  <strong id="summary-subtotal">R$ 0,00</strong>
                 </div>
                 <div class="d-flex justify-content-between">
                   <span>Descontos</span>
@@ -176,7 +151,7 @@
                 </div>
                 <div class="d-flex justify-content-between pos-total">
                   <span>Total</span>
-                  <strong id="summary-total">R$ 24,11</strong>
+                  <strong id="summary-total">R$ 0,00</strong>
                 </div>
                 <div class="pos-payment">
                   <label class="form-label">Valor pago</label>
@@ -186,7 +161,7 @@
                     <strong id="change-due">R$ 0,00</strong>
                   </div>
                 </div>
-                <select class="form-select mt-3">
+                <select class="form-select mt-3" id="payment-method">
                   <option>Dinheiro</option>
                   <option>Cartão</option>
                   <option>Pix</option>
