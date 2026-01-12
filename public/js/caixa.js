@@ -38,7 +38,7 @@ const approvalModal = approvalModalElement
 const noteModal = noteModalElement ? new bootstrap.Modal(noteModalElement) : null;
 
 const { getJson, postJson, requestJson } = window.apiClient || {};
-const { posCatalog, posDevices, posFormat, posItems } = window;
+const { posApprovals, posCatalog, posDevices, posFormat, posItems, posSummary } = window;
 
 const state = {
   items: [],
@@ -59,28 +59,29 @@ const setFeedback = (message, type = "secondary") => {
 
 const { formatCurrency, parseCurrency, parseNumber, getItemTotal, normalizeSaleQuantity } = posFormat;
 
-const updateSummary = () => {
-  if (!summaryItems || !summarySubtotal || !summaryDiscount || !summaryTotal) {
-    return;
-  }
-  const subtotal = state.items.reduce((sum, item) => sum + getItemTotal(item), 0);
-  const total = Math.max(subtotal - state.discountTotal, 0);
-  summaryItems.textContent = String(state.items.length);
-  summarySubtotal.textContent = formatCurrency(subtotal);
-  summaryDiscount.textContent = formatCurrency(state.discountTotal);
-  summaryTotal.textContent = formatCurrency(total);
-  updateChangeDue();
-};
+const updateSummary = () =>
+  posSummary.updateSummary({
+    items: state.items,
+    discountTotal: state.discountTotal,
+    summaryItems,
+    summarySubtotal,
+    summaryDiscount,
+    summaryTotal,
+    amountPaidInput,
+    changeDueLabel,
+    formatCurrency,
+    getItemTotal,
+    parseCurrency,
+  });
 
-const updateChangeDue = () => {
-  if (!amountPaidInput || !changeDueLabel) {
-    return;
-  }
-  const total = parseCurrency(summaryTotal?.textContent || "0");
-  const paid = parseCurrency(amountPaidInput.value);
-  const change = Math.max(paid - total, 0);
-  changeDueLabel.textContent = formatCurrency(change);
-};
+const updateChangeDue = () =>
+  posSummary.updateChangeDue({
+    amountPaidInput,
+    changeDueLabel,
+    totalLabel: summaryTotal,
+    parseCurrency,
+    formatCurrency,
+  });
 
 const focusBarcode = () => {
   barcodeInput?.focus();
@@ -103,7 +104,8 @@ const syncItemsFromDom = () => {
 };
 
 const requestApproval = async ({ action, reason, metadata }) =>
-  postJson("/api/approvals", {
+  posApprovals.requestApproval({
+    postJson,
     email: managerEmailInput.value,
     password: managerPasswordInput.value,
     action,
@@ -112,21 +114,21 @@ const requestApproval = async ({ action, reason, metadata }) =>
   });
 
 const postWithApproval = async ({ url, payload, token }) =>
-  requestJson(url, {
-    method: "POST",
-    headers: { "x-approval-token": token },
-    body: JSON.stringify(payload),
+  posApprovals.postWithApproval({
+    requestJson,
+    url,
+    payload,
+    token,
   });
 
-const openApprovalModal = (action, metadata) => {
-  if (!approvalModal) {
-    return;
-  }
-  approvalActionInput.value = action;
-  approvalForm.dataset.metadata = JSON.stringify(metadata || {});
-  approvalForm.reset();
-  approvalModal.show();
-};
+const openApprovalModal = (action, metadata) =>
+  posApprovals.openApprovalModal({
+    modal: approvalModal,
+    form: approvalForm,
+    actionInput: approvalActionInput,
+    action,
+    metadata,
+  });
 
 const addItem = ({ name, price, quantity, weight, status, unitType, sku, productId }) => {
   const item = {
