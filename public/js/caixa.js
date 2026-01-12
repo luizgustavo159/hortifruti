@@ -38,7 +38,18 @@ const approvalModal = approvalModalElement
 const noteModal = noteModalElement ? new bootstrap.Modal(noteModalElement) : null;
 
 const { getJson, postJson, requestJson } = window.apiClient || {};
-const { posApprovals, posCatalog, posDevices, posFormat, posItems, posSummary } = window;
+const {
+  posApprovals,
+  posCatalog,
+  posDevices,
+  posFormat,
+  posItems,
+  posNotes,
+  posSales,
+  posShortcuts,
+  posSummary,
+  posSuspendedSales,
+} = window;
 
 const state = {
   items: [],
@@ -165,61 +176,31 @@ const clearSale = () => {
   focusBarcode();
 };
 
-const renderSuspendedSales = () => {
-  if (!suspendedSalesContainer) {
-    return;
-  }
-  if (state.suspendedSales.length === 0) {
-    suspendedSalesContainer.innerHTML = "Nenhuma venda suspensa.";
-    return;
-  }
-  suspendedSalesContainer.innerHTML = "";
-  state.suspendedSales.forEach((sale, index) => {
-    const wrapper = document.createElement("div");
-    wrapper.className = "d-flex justify-content-between align-items-center mb-2";
-    wrapper.innerHTML = `
-      <span class="text-muted">Venda ${index + 1} • ${sale.items.length} item(s)</span>
-      <button class="btn btn-outline-success btn-sm" data-resume="${index}">Retomar</button>
-    `;
-    wrapper.querySelector("[data-resume]")?.addEventListener("click", () => {
-      restoreSuspendedSale(index);
-    });
-    suspendedSalesContainer.appendChild(wrapper);
+const renderSuspendedSales = () =>
+  posSuspendedSales.renderSuspendedSales({
+    container: suspendedSalesContainer,
+    sales: state.suspendedSales,
+    onResume: (index) => restoreSuspendedSale(index),
   });
-};
 
-const suspendCurrentSale = () => {
-  if (state.items.length === 0) {
-    setFeedback("Nenhum item para suspender.", "warning");
-    return;
-  }
-  state.suspendedSales.unshift({
-    items: [...state.items],
-    discount: state.discountTotal,
-    note: state.saleNote,
+const suspendCurrentSale = () =>
+  posSuspendedSales.suspendCurrentSale({
+    state,
+    setFeedback,
+    clearSale,
+    renderSuspendedSales,
   });
-  setFeedback("Venda suspensa. Pronto para nova leitura.", "info");
-  clearSale();
-  renderSuspendedSales();
-};
 
-const restoreSuspendedSale = (index = 0) => {
-  const sale = state.suspendedSales.splice(index, 1)[0];
-  if (!sale) {
-    setFeedback("Nenhuma venda suspensa para retomar.", "warning");
-    return;
-  }
-  state.items = sale.items;
-  state.discountTotal = sale.discount;
-  state.saleNote = sale.note || "";
-  if (noteInput) {
-    noteInput.value = state.saleNote;
-  }
-  renderItems();
-  renderSuspendedSales();
-  setFeedback("Venda retomada.", "success");
-  focusBarcode();
-};
+const restoreSuspendedSale = (index = 0) =>
+  posSuspendedSales.restoreSuspendedSale({
+    state,
+    index,
+    noteInput,
+    renderItems,
+    renderSuspendedSales,
+    setFeedback,
+    focusBarcode,
+  });
 
 const handleCancelSale = async () => {
   if (state.items.length === 0) {
@@ -434,45 +415,21 @@ suspendSaleButton?.addEventListener("click", suspendCurrentSale);
 resumeSaleButton?.addEventListener("click", () => restoreSuspendedSale(0));
 cancelSaleButton?.addEventListener("click", handleCancelSale);
 
-addNoteButton?.addEventListener("click", () => {
-  if (!noteModal) {
-    return;
-  }
-  noteInput.value = state.saleNote || "";
-  noteModal.show();
+posNotes.initNotes({
+  addNoteButton,
+  noteModal,
+  noteInput,
+  noteForm,
+  state,
+  setFeedback,
 });
 
-noteForm?.addEventListener("submit", (event) => {
-  event.preventDefault();
-  state.saleNote = noteInput.value.trim();
-  noteModal.hide();
-  if (state.saleNote) {
-    setFeedback("Observação salva na venda atual.", "info");
-  }
-});
-
-document.addEventListener("keydown", (event) => {
-  if (event.key === "F2") {
-    event.preventDefault();
-    finishSaleButton?.click();
-  }
-  if (event.key === "F4") {
-    event.preventDefault();
-    applyManagerDiscountButton?.click();
-  }
-  if (event.key === "F8") {
-    event.preventDefault();
-    const firstRemove = document.querySelector(".js-remove-item");
-    firstRemove?.click();
-  }
-  if (event.key === "F6") {
-    event.preventDefault();
-    suspendSaleButton?.click();
-  }
-  if (event.key === "F9") {
-    event.preventDefault();
-    resumeSaleButton?.click();
-  }
+posShortcuts.registerShortcuts({
+  onFinish: () => finishSaleButton?.click(),
+  onManagerDiscount: () => applyManagerDiscountButton?.click(),
+  onRemoveFirst: () => document.querySelector(".js-remove-item")?.click(),
+  onSuspend: () => suspendSaleButton?.click(),
+  onResume: () => resumeSaleButton?.click(),
 });
 
 finishSaleButton?.addEventListener("click", async () => {
@@ -487,17 +444,12 @@ finishSaleButton?.addEventListener("click", async () => {
   const paymentMethod = paymentMethodSelect?.value || "Dinheiro";
   try {
     setFeedback("Registrando venda...", "info");
-    for (const item of state.items) {
-      if (!item.productId) {
-        throw new Error(`Produto sem cadastro: ${item.name}`);
-      }
-      const quantity = getAdjustedQuantity(item);
-      await postJson("/api/sales", {
-        product_id: item.productId,
-        quantity,
-        payment_method: paymentMethod,
-      });
-    }
+    await posSales.finalizeSale({
+      postJson,
+      items: state.items,
+      paymentMethod,
+      getAdjustedQuantity,
+    });
     setFeedback("Venda finalizada e registrada no estoque.", "success");
     clearSale();
     loadProducts();
