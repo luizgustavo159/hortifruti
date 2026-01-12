@@ -7,7 +7,9 @@
     "start": "node scripts/migrate.js && node server.js",
     "migrate": "node scripts/migrate.js",
     "bootstrap:admin": "node scripts/bootstrap-admin.js",
-    "test": "jest"
+    "test": "jest",
+    "lint": "eslint .",
+    "format": "prettier --write \"**/*.js\" \"**/*.json\" \"**/*.md\""
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -24,7 +26,10 @@
     "pino-http": "^9.0.0"
   },
   "devDependencies": {
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
     "jest": "^29.7.0",
+    "prettier": "^3.3.3",
     "supertest": "^6.3.4"
   }
 }
