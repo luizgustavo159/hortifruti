@@ -38,7 +38,7 @@ const approvalModal = approvalModalElement
 const noteModal = noteModalElement ? new bootstrap.Modal(noteModalElement) : null;
 
 const { getJson, postJson, requestJson } = window.apiClient || {};
-const { posCatalog, posDevices } = window;
+const { posCatalog, posDevices, posFormat } = window;
 
 const state = {
   items: [],
@@ -57,28 +57,7 @@ const setFeedback = (message, type = "secondary") => {
   feedback.textContent = message;
 };
 
-const formatCurrency = (value) =>
-  value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-
-const parseCurrency = (value) =>
-  Number(
-    String(value)
-      .replace(/[R$\s]/g, "")
-      .replace(".", "")
-      .replace(",", ".")
-  ) || 0;
-
-const parseNumber = (value, fallback = 0) => {
-  const parsed = parseCurrency(value);
-  return Number.isNaN(parsed) ? fallback : parsed;
-};
-
-const getItemTotal = (item) => {
-  if (item.weight > 0) {
-    return item.price * item.weight;
-  }
-  return item.price * item.quantity;
-};
+const { formatCurrency, parseCurrency, parseNumber, getItemTotal, normalizeSaleQuantity } = posFormat;
 
 const updateSummary = () => {
   if (!summaryItems || !summarySubtotal || !summaryDiscount || !summaryTotal) {
@@ -297,7 +276,7 @@ const handleCancelSale = async () => {
   openApprovalModal("cancel_sale", { items: state.items.length });
 };
 
-const normalizeSaleQuantity = (item) => {
+const getAdjustedQuantity = (item) => {
   if (item.weight > 0) {
     const rounded = Math.round(item.weight);
     if (Number(item.weight).toFixed(2) !== Number(rounded).toFixed(2)) {
@@ -306,9 +285,8 @@ const normalizeSaleQuantity = (item) => {
         "warning"
       );
     }
-    return Math.max(rounded, 1);
   }
-  return Math.max(Number(item.quantity || 1), 1);
+  return normalizeSaleQuantity(item);
 };
 
 const loadDevices = async () => {
@@ -560,7 +538,7 @@ finishSaleButton?.addEventListener("click", async () => {
       if (!item.productId) {
         throw new Error(`Produto sem cadastro: ${item.name}`);
       }
-      const quantity = normalizeSaleQuantity(item);
+      const quantity = getAdjustedQuantity(item);
       await postJson("/api/sales", {
         product_id: item.productId,
         quantity,

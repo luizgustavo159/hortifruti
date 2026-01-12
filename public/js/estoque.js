@@ -64,7 +64,7 @@ let productLookup = new Map();
 let suppliersCache = [];
 
 const { getJson, postJson, requestJson } = window.apiClient || {};
-const { stockUtils, stockCatalog, stockExports } = window;
+const { stockUtils, stockCatalog, stockExports, stockForms } = window;
 
 const resolveProductByName = async (name) =>
   stockCatalog.resolveProductByName({ name, productLookup });
@@ -587,47 +587,16 @@ const exportTable = (type) => {
   stockExports.exportTable({ type, headers, rows });
 };
 
-const showFormError = (message) => {
-  if (!productFormError) {
-    return;
-  }
-  if (!message) {
-    productFormError.classList.add("d-none");
-    productFormError.textContent = "";
-    return;
-  }
-  productFormError.textContent = message;
-  productFormError.classList.remove("d-none");
-};
+const showFormError = (message) => stockForms.showFormError({ element: productFormError, message });
 
-const validateProductForm = () => {
-  const minValue = Number(productMinInput?.value || 0);
-  const maxValue = Number(productMaxInput?.value || 0);
-  const priceValue = Number((productPriceInput?.value || "0").replace(",", "."));
-  const stockValue = Number(productStockInput?.value || 0);
-  if (Number.isNaN(minValue) || Number.isNaN(maxValue)) {
-    showFormError("Informe valores numéricos para estoque mínimo e máximo.");
-    return false;
-  }
-  if (Number.isNaN(priceValue) || priceValue <= 0) {
-    showFormError("Informe um preço válido.");
-    return false;
-  }
-  if (Number.isNaN(stockValue) || stockValue < 0) {
-    showFormError("Informe um estoque inicial válido.");
-    return false;
-  }
-  if (minValue <= 0 || maxValue <= 0) {
-    showFormError("Os valores de estoque devem ser maiores que zero.");
-    return false;
-  }
-  if (minValue > maxValue) {
-    showFormError("O estoque mínimo não pode ser maior que o máximo.");
-    return false;
-  }
-  showFormError("");
-  return true;
-};
+const validateProductForm = () =>
+  stockForms.validateProductForm({
+    minValue: Number(productMinInput?.value || 0),
+    maxValue: Number(productMaxInput?.value || 0),
+    priceValue: Number((productPriceInput?.value || "0").replace(",", ".")),
+    stockValue: Number(productStockInput?.value || 0),
+    element: productFormError,
+  });
 
 stockMoveForm?.querySelector("select")?.addEventListener("change", updateLossReasonVisibility);
 stockSearchInput?.addEventListener("input", () => {
