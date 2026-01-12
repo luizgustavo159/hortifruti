@@ -38,6 +38,7 @@ const approvalModal = approvalModalElement
 const noteModal = noteModalElement ? new bootstrap.Modal(noteModalElement) : null;
 
 const { getJson, postJson, requestJson } = window.apiClient || {};
+const { posCatalog, posDevices } = window;
 
 const state = {
   items: [],
@@ -70,13 +71,6 @@ const parseCurrency = (value) =>
 const parseNumber = (value, fallback = 0) => {
   const parsed = parseCurrency(value);
   return Number.isNaN(parsed) ? fallback : parsed;
-};
-
-const normalizeKey = (value) => String(value || "").trim().toLowerCase();
-
-const isWeightUnit = (unitType) => {
-  const normalized = normalizeKey(unitType);
-  return normalized.includes("kg") || normalized.includes("quilo") || normalized.includes("grama");
 };
 
 const getItemTotal = (item) => {
@@ -209,35 +203,6 @@ const openApprovalModal = (action, metadata) => {
   approvalModal.show();
 };
 
-const buildProductLookup = (products) => {
-  const map = new Map();
-  products.forEach((product) => {
-    if (!product) {
-      return;
-    }
-    if (product.name) {
-      map.set(normalizeKey(product.name), product);
-    }
-    if (product.sku) {
-      map.set(normalizeKey(product.sku), product);
-    }
-  });
-  state.productLookup = map;
-};
-
-const renderProductSearchList = () => {
-  if (!productSearchList) {
-    return;
-  }
-  productSearchList.innerHTML = "";
-  state.products.forEach((product) => {
-    const option = document.createElement("option");
-    const sku = product.sku ? `(${product.sku})` : "";
-    option.value = `${product.name} ${sku}`.trim();
-    productSearchList.appendChild(option);
-  });
-};
-
 const addItem = ({ name, price, quantity, weight, status, unitType, sku, productId }) => {
   const item = {
     name,
@@ -346,38 +311,12 @@ const normalizeSaleQuantity = (item) => {
   return Math.max(Number(item.quantity || 1), 1);
 };
 
-const updateDeviceStatus = (devices = []) => {
-  if (!deviceStatusList) {
-    return;
-  }
-  deviceStatusList.innerHTML = "";
-  if (!devices.length) {
-    deviceStatusList.innerHTML = '<div class="list-group-item text-muted">Nenhum dispositivo cadastrado.</div>';
-    return;
-  }
-  devices.forEach((device) => {
-    const item = document.createElement("div");
-    item.className = "list-group-item d-flex justify-content-between align-items-center";
-    const status = device.active ? "Ativo" : "Inativo";
-    const badgeClass = device.active ? "text-bg-success" : "text-bg-secondary";
-    item.innerHTML = `
-      <div>
-        <div class="fw-semibold">${device.name}</div>
-        <div class="text-muted small">${device.type} • ${device.connection}</div>
-      </div>
-      <span class="badge ${badgeClass}">${status}</span>
-    `;
-    deviceStatusList.appendChild(item);
-  });
-};
-
 const loadDevices = async () => {
-  if (!getJson) {
+  if (!getJson || !posDevices) {
     return;
   }
   try {
-    const devices = await getJson("/api/pos/devices");
-    updateDeviceStatus(devices || []);
+    await posDevices.loadDevices({ getJson, list: deviceStatusList });
   } catch (error) {
     if (deviceStatusList) {
       deviceStatusList.innerHTML =
@@ -387,36 +326,23 @@ const loadDevices = async () => {
 };
 
 const loadProducts = async () => {
-  if (!getJson) {
+  if (!getJson || !posCatalog) {
     return;
   }
   try {
-    state.products = await getJson("/api/products");
-    buildProductLookup(state.products);
-    renderProductSearchList();
+    const { products, lookup } = await posCatalog.loadProducts({
+      getJson,
+      datalist: productSearchList,
+    });
+    state.products = products;
+    state.productLookup = lookup;
     setFeedback("Catálogo sincronizado com o estoque.", "info");
   } catch (error) {
     setFeedback(error.message || "Não foi possível carregar o catálogo.", "danger");
   }
 };
 
-const resolveProduct = (inputValue) => {
-  const normalized = normalizeKey(inputValue);
-  if (!normalized) {
-    return null;
-  }
-  if (state.productLookup.has(normalized)) {
-    return state.productLookup.get(normalized);
-  }
-  const match = normalized.match(/\(([^)]+)\)$/);
-  if (match) {
-    const sku = normalizeKey(match[1]);
-    if (state.productLookup.has(sku)) {
-      return state.productLookup.get(sku);
-    }
-  }
-  return null;
-};
+const resolveProduct = (inputValue) => posCatalog?.resolveProduct(inputValue, state.productLookup);
 
 document.querySelectorAll(".js-remove-item").forEach((button) => {
   button.addEventListener("click", () => {
@@ -506,7 +432,7 @@ barcodeInput?.addEventListener("keydown", (event) => {
   }
   const quantity = Math.max(parseNumber(quantityInput?.value || "1", 1), 1);
   const weight = Math.max(parseNumber(weightInput?.value || "0"), 0);
-  const usesWeight = isWeightUnit(product.unit_type);
+  const usesWeight = posCatalog?.isWeightUnit(product.unit_type) ?? false;
   const selectedWeight = usesWeight
     ? scaleModeToggle?.checked
       ? weight || 1
@@ -543,7 +469,7 @@ quickItemButtons.forEach((button) => {
       return;
     }
     const weight = Math.max(parseNumber(weightInput?.value || "0"), 0);
-    const usesWeight = isWeightUnit(product.unit_type);
+    const usesWeight = posCatalog?.isWeightUnit(product.unit_type) ?? false;
     const selectedWeight = usesWeight
       ? scaleModeToggle?.checked
         ? weight || 1
