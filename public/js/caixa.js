@@ -13,9 +13,11 @@ const weightInput = document.getElementById("weight-input");
 const scaleModeToggle = document.getElementById("scale-mode");
 const amountPaidInput = document.getElementById("amount-paid");
 const changeDueLabel = document.getElementById("change-due");
+const paymentMethodSelect = document.getElementById("payment-method");
 const finishSaleButton = document.getElementById("finish-sale");
 const cancelSaleButton = document.getElementById("cancel-sale");
 const posItemsContainer = document.querySelector(".pos-items");
+const productSearchList = document.getElementById("product-search-list");
 const summaryItems = document.getElementById("summary-items");
 const summarySubtotal = document.getElementById("summary-subtotal");
 const summaryDiscount = document.getElementById("summary-discount");
@@ -28,19 +30,34 @@ const noteModalElement = document.getElementById("noteModal");
 const noteForm = document.getElementById("note-form");
 const noteInput = document.getElementById("sale-note");
 const addNoteButton = document.getElementById("add-note");
+const deviceStatusList = document.getElementById("pos-device-status");
 
 const approvalModal = approvalModalElement
   ? new bootstrap.Modal(approvalModalElement)
   : null;
 const noteModal = noteModalElement ? new bootstrap.Modal(noteModalElement) : null;
 
-const { postJson, requestJson } = window.apiClient || {};
+const { getJson, postJson, requestJson } = window.apiClient || {};
+const {
+  posApprovals,
+  posCatalog,
+  posDevices,
+  posFormat,
+  posItems,
+  posNotes,
+  posSales,
+  posShortcuts,
+  posSummary,
+  posSuspendedSales,
+} = window;
 
 const state = {
   items: [],
   suspendedSales: [],
   discountTotal: 0,
   saleNote: "",
+  products: [],
+  productLookup: new Map(),
 };
 
 const setFeedback = (message, type = "secondary") => {
@@ -51,125 +68,55 @@ const setFeedback = (message, type = "secondary") => {
   feedback.textContent = message;
 };
 
-const formatCurrency = (value) =>
-  value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const { formatCurrency, parseCurrency, parseNumber, getItemTotal, normalizeSaleQuantity } = posFormat;
 
-const parseCurrency = (value) =>
-  Number(
-    String(value)
-      .replace(/[R$\s]/g, "")
-      .replace(".", "")
-      .replace(",", ".")
-  ) || 0;
+const updateSummary = () =>
+  posSummary.updateSummary({
+    items: state.items,
+    discountTotal: state.discountTotal,
+    summaryItems,
+    summarySubtotal,
+    summaryDiscount,
+    summaryTotal,
+    amountPaidInput,
+    changeDueLabel,
+    formatCurrency,
+    getItemTotal,
+    parseCurrency,
+  });
 
-const parseNumber = (value, fallback = 0) => {
-  const parsed = parseCurrency(value);
-  return Number.isNaN(parsed) ? fallback : parsed;
-};
-
-const getItemTotal = (item) => {
-  if (item.weight > 0) {
-    return item.price * item.weight;
-  }
-  return item.price * item.quantity;
-};
-
-const updateSummary = () => {
-  if (!summaryItems || !summarySubtotal || !summaryDiscount || !summaryTotal) {
-    return;
-  }
-  const subtotal = state.items.reduce((sum, item) => sum + getItemTotal(item), 0);
-  const total = Math.max(subtotal - state.discountTotal, 0);
-  summaryItems.textContent = String(state.items.length);
-  summarySubtotal.textContent = formatCurrency(subtotal);
-  summaryDiscount.textContent = formatCurrency(state.discountTotal);
-  summaryTotal.textContent = formatCurrency(total);
-  updateChangeDue();
-};
-
-const updateChangeDue = () => {
-  if (!amountPaidInput || !changeDueLabel) {
-    return;
-  }
-  const total = parseCurrency(summaryTotal?.textContent || "0");
-  const paid = parseCurrency(amountPaidInput.value);
-  const change = Math.max(paid - total, 0);
-  changeDueLabel.textContent = formatCurrency(change);
-};
+const updateChangeDue = () =>
+  posSummary.updateChangeDue({
+    amountPaidInput,
+    changeDueLabel,
+    totalLabel: summaryTotal,
+    parseCurrency,
+    formatCurrency,
+  });
 
 const focusBarcode = () => {
   barcodeInput?.focus();
 };
 
-const setLatestItem = (element) => {
-  document.querySelectorAll(".pos-item").forEach((item) => {
-    item.classList.remove("pos-item--latest");
-  });
-  element.classList.add("pos-item--latest");
-};
-
-const createItemElement = (item) => {
-  const element = document.createElement("div");
-  element.className = "pos-item";
-  element.dataset.unitPrice = String(item.price);
-  element.dataset.quantity = String(item.quantity);
-  element.dataset.weight = String(item.weight);
-  const description = item.weight > 0
-    ? `${item.weight.toFixed(3).replace(".", ",")} kg × ${formatCurrency(item.price)}`
-    : `${item.quantity} un × ${formatCurrency(item.price)}`;
-  const statusLabel = item.status === "low" ? "Estoque baixo" : "Disponível";
-  const statusClass = item.status === "low" ? "text-bg-warning" : "text-bg-secondary";
-  element.innerHTML = `
-    <div>
-      <strong>${item.name}</strong>
-      <span class="d-block text-muted">${description}</span>
-      <span class="badge ${statusClass} mt-1">${statusLabel}</span>
-    </div>
-    <div class="text-end">
-      <strong>${formatCurrency(getItemTotal(item))}</strong>
-      <button class="btn btn-link text-danger btn-sm js-remove-item" data-item="${item.name}">
-        Remover
-      </button>
-    </div>
-  `;
-  element.querySelector(".js-remove-item")?.addEventListener("click", () => {
-    openApprovalModal("remove_item", { item: item.name });
-  });
-  return element;
-};
-
 const renderItems = () => {
-  if (!posItemsContainer) {
-    return;
-  }
-  posItemsContainer.innerHTML = "";
-  state.items.forEach((item, index) => {
-    const element = createItemElement(item);
-    if (index === state.items.length - 1) {
-      element.classList.add("pos-item--latest");
-    }
-    posItemsContainer.appendChild(element);
+  posItems.renderItems({
+    container: posItemsContainer,
+    items: state.items,
+    formatCurrency,
+    getItemTotal,
+    onRemove: (itemName) => openApprovalModal("remove_item", { item: itemName }),
   });
   updateSummary();
 };
 
 const syncItemsFromDom = () => {
-  const items = [];
-  document.querySelectorAll(".pos-item").forEach((element) => {
-    const name = element.querySelector("strong")?.textContent?.trim() || "Item";
-    const price = Number(element.dataset.unitPrice || 0);
-    const quantity = Number(element.dataset.quantity || 1);
-    const weight = Number(element.dataset.weight || 0);
-    const statusBadge = element.querySelector(".badge");
-    const status = statusBadge?.textContent?.includes("baixo") ? "low" : "ok";
-    items.push({ name, price, quantity, weight, status });
-  });
-  state.items = items;
+  state.items = posItems.syncItemsFromDom({ container: posItemsContainer });
   updateSummary();
 };
 
 const requestApproval = async ({ action, reason, metadata }) =>
-  postJson("/api/approvals", {
+  posApprovals.requestApproval({
+    postJson,
     email: managerEmailInput.value,
     password: managerPasswordInput.value,
     action,
@@ -178,58 +125,42 @@ const requestApproval = async ({ action, reason, metadata }) =>
   });
 
 const postWithApproval = async ({ url, payload, token }) =>
-  requestJson(url, {
-    method: "POST",
-    headers: { "x-approval-token": token },
-    body: JSON.stringify(payload),
+  posApprovals.postWithApproval({
+    requestJson,
+    url,
+    payload,
+    token,
   });
 
-const openApprovalModal = (action, metadata) => {
-  if (!approvalModal) {
-    return;
-  }
-  approvalActionInput.value = action;
-  approvalForm.dataset.metadata = JSON.stringify(metadata || {});
-  approvalForm.reset();
-  approvalModal.show();
-};
+const openApprovalModal = (action, metadata) =>
+  posApprovals.openApprovalModal({
+    modal: approvalModal,
+    form: approvalForm,
+    actionInput: approvalActionInput,
+    action,
+    metadata,
+  });
 
-const quickItemCatalog = {
-  "Banana Prata": { price: 6.5, weight: 1.25, status: "low" },
-  "Tomate Italiano": { price: 8.9, weight: 1, status: "ok" },
-  "Cebola Roxa": { price: 7.4, weight: 0.8, status: "ok" },
-};
-
-const barcodeCatalog = {
-  BAN001: { name: "Banana Prata", price: 6.5, status: "low" },
-  TOM001: { name: "Tomate Italiano", price: 8.9, status: "ok" },
-  CEB001: { name: "Cebola Roxa", price: 7.4, status: "ok" },
-};
-
-const searchCatalog = {
-  "BANANA PRATA (PLU 4011)": { name: "Banana Prata", price: 6.5, status: "low" },
-  "TOMATE ITALIANO (PLU 3151)": { name: "Tomate Italiano", price: 8.9, status: "ok" },
-  "CEBOLA ROXA (PLU 4166)": { name: "Cebola Roxa", price: 7.4, status: "ok" },
-  "4011": { name: "Banana Prata", price: 6.5, status: "low" },
-  "3151": { name: "Tomate Italiano", price: 8.9, status: "ok" },
-  "4166": { name: "Cebola Roxa", price: 7.4, status: "ok" },
-  "BANANA PRATA": { name: "Banana Prata", price: 6.5, status: "low" },
-  "TOMATE ITALIANO": { name: "Tomate Italiano", price: 8.9, status: "ok" },
-  "CEBOLA ROXA": { name: "Cebola Roxa", price: 7.4, status: "ok" },
-};
-
-const addItem = ({ name, price, quantity, weight, status }) => {
+const addItem = ({ name, price, quantity, weight, status, unitType, sku, productId }) => {
   const item = {
     name,
     price,
     quantity,
     weight,
     status,
+    unitType,
+    sku,
+    productId,
   };
   state.items.push(item);
-  const element = createItemElement(item);
+  const element = posItems.createItemElement({
+    item,
+    formatCurrency,
+    getItemTotal,
+    onRemove: (itemName) => openApprovalModal("remove_item", { item: itemName }),
+  });
   posItemsContainer?.appendChild(element);
-  setLatestItem(element);
+  posItems.setLatestItem(element);
   updateSummary();
   setFeedback(`Item adicionado: ${name}`, "success");
   focusBarcode();
@@ -245,61 +176,31 @@ const clearSale = () => {
   focusBarcode();
 };
 
-const renderSuspendedSales = () => {
-  if (!suspendedSalesContainer) {
-    return;
-  }
-  if (state.suspendedSales.length === 0) {
-    suspendedSalesContainer.innerHTML = "Nenhuma venda suspensa.";
-    return;
-  }
-  suspendedSalesContainer.innerHTML = "";
-  state.suspendedSales.forEach((sale, index) => {
-    const wrapper = document.createElement("div");
-    wrapper.className = "d-flex justify-content-between align-items-center mb-2";
-    wrapper.innerHTML = `
-      <span class="text-muted">Venda ${index + 1} • ${sale.items.length} item(s)</span>
-      <button class="btn btn-outline-success btn-sm" data-resume="${index}">Retomar</button>
-    `;
-    wrapper.querySelector("[data-resume]")?.addEventListener("click", () => {
-      restoreSuspendedSale(index);
-    });
-    suspendedSalesContainer.appendChild(wrapper);
+const renderSuspendedSales = () =>
+  posSuspendedSales.renderSuspendedSales({
+    container: suspendedSalesContainer,
+    sales: state.suspendedSales,
+    onResume: (index) => restoreSuspendedSale(index),
   });
-};
 
-const suspendCurrentSale = () => {
-  if (state.items.length === 0) {
-    setFeedback("Nenhum item para suspender.", "warning");
-    return;
-  }
-  state.suspendedSales.unshift({
-    items: [...state.items],
-    discount: state.discountTotal,
-    note: state.saleNote,
+const suspendCurrentSale = () =>
+  posSuspendedSales.suspendCurrentSale({
+    state,
+    setFeedback,
+    clearSale,
+    renderSuspendedSales,
   });
-  setFeedback("Venda suspensa. Pronto para nova leitura.", "info");
-  clearSale();
-  renderSuspendedSales();
-};
 
-const restoreSuspendedSale = (index = 0) => {
-  const sale = state.suspendedSales.splice(index, 1)[0];
-  if (!sale) {
-    setFeedback("Nenhuma venda suspensa para retomar.", "warning");
-    return;
-  }
-  state.items = sale.items;
-  state.discountTotal = sale.discount;
-  state.saleNote = sale.note || "";
-  if (noteInput) {
-    noteInput.value = state.saleNote;
-  }
-  renderItems();
-  renderSuspendedSales();
-  setFeedback("Venda retomada.", "success");
-  focusBarcode();
-};
+const restoreSuspendedSale = (index = 0) =>
+  posSuspendedSales.restoreSuspendedSale({
+    state,
+    index,
+    noteInput,
+    renderItems,
+    renderSuspendedSales,
+    setFeedback,
+    focusBarcode,
+  });
 
 const handleCancelSale = async () => {
   if (state.items.length === 0) {
@@ -308,6 +209,52 @@ const handleCancelSale = async () => {
   }
   openApprovalModal("cancel_sale", { items: state.items.length });
 };
+
+const getAdjustedQuantity = (item) => {
+  if (item.weight > 0) {
+    const rounded = Math.round(item.weight);
+    if (Number(item.weight).toFixed(2) !== Number(rounded).toFixed(2)) {
+      setFeedback(
+        `Peso ${item.weight.toFixed(2).replace(".", ",")} ${item.unitType || "kg"} ajustado para ${rounded}.`,
+        "warning"
+      );
+    }
+  }
+  return normalizeSaleQuantity(item);
+};
+
+const loadDevices = async () => {
+  if (!getJson || !posDevices) {
+    return;
+  }
+  try {
+    await posDevices.loadDevices({ getJson, list: deviceStatusList });
+  } catch (error) {
+    if (deviceStatusList) {
+      deviceStatusList.innerHTML =
+        '<div class="list-group-item text-danger">Erro ao carregar dispositivos.</div>';
+    }
+  }
+};
+
+const loadProducts = async () => {
+  if (!getJson || !posCatalog) {
+    return;
+  }
+  try {
+    const { products, lookup } = await posCatalog.loadProducts({
+      getJson,
+      datalist: productSearchList,
+    });
+    state.products = products;
+    state.productLookup = lookup;
+    setFeedback("Catálogo sincronizado com o estoque.", "info");
+  } catch (error) {
+    setFeedback(error.message || "Não foi possível carregar o catálogo.", "danger");
+  }
+};
+
+const resolveProduct = (inputValue) => posCatalog?.resolveProduct(inputValue, state.productLookup);
 
 document.querySelectorAll(".js-remove-item").forEach((button) => {
   button.addEventListener("click", () => {
@@ -385,25 +332,36 @@ barcodeInput?.addEventListener("keydown", (event) => {
     return;
   }
   event.preventDefault();
-  const inputValue = barcodeInput.value.trim().toUpperCase();
+  const inputValue = barcodeInput.value.trim();
   if (!inputValue) {
     setFeedback("Informe o código, PLU ou nome do produto.", "warning");
     return;
   }
-  const product = barcodeCatalog[inputValue] || searchCatalog[inputValue];
+  const product = resolveProduct(inputValue);
   if (!product) {
     setFeedback("Produto não encontrado no catálogo rápido.", "warning");
     return;
   }
   const quantity = Math.max(parseNumber(quantityInput?.value || "1", 1), 1);
   const weight = Math.max(parseNumber(weightInput?.value || "0"), 0);
-  const selectedWeight = scaleModeToggle?.checked ? weight || product.weight || 1 : weight;
+  const usesWeight = posCatalog?.isWeightUnit(product.unit_type) ?? false;
+  const selectedWeight = usesWeight
+    ? scaleModeToggle?.checked
+      ? weight || 1
+      : weight > 0
+        ? weight
+        : 0
+    : 0;
+  const status = product.current_stock <= product.min_stock ? "low" : "ok";
   addItem({
     name: product.name,
-    price: product.price,
-    quantity,
+    price: Number(product.price || 0),
+    quantity: usesWeight ? 1 : quantity,
     weight: selectedWeight,
-    status: product.status,
+    status,
+    unitType: product.unit_type,
+    sku: product.sku,
+    productId: product.id,
   });
   barcodeInput.value = "";
   if (quantityInput) {
@@ -417,18 +375,30 @@ barcodeInput?.addEventListener("keydown", (event) => {
 quickItemButtons.forEach((button) => {
   button.addEventListener("click", () => {
     const name = button.dataset.quickItem;
-    const product = quickItemCatalog[name];
+    const product = resolveProduct(name);
     if (!product) {
+      setFeedback("Produto não encontrado no catálogo sincronizado.", "warning");
       return;
     }
-    const weight = Math.max(parseNumber(weightInput?.value || product.weight), 0);
-    const selectedWeight = scaleModeToggle?.checked ? weight : product.weight;
+    const weight = Math.max(parseNumber(weightInput?.value || "0"), 0);
+    const usesWeight = posCatalog?.isWeightUnit(product.unit_type) ?? false;
+    const selectedWeight = usesWeight
+      ? scaleModeToggle?.checked
+        ? weight || 1
+        : weight > 0
+          ? weight
+          : 0
+      : 0;
+    const status = product.current_stock <= product.min_stock ? "low" : "ok";
     addItem({
-      name,
-      price: product.price,
-      quantity: 1,
+      name: product.name,
+      price: Number(product.price || 0),
+      quantity: usesWeight ? 1 : 1,
       weight: selectedWeight,
-      status: product.status,
+      status,
+      unitType: product.unit_type,
+      sku: product.sku,
+      productId: product.id,
     });
   });
 });
@@ -445,52 +415,51 @@ suspendSaleButton?.addEventListener("click", suspendCurrentSale);
 resumeSaleButton?.addEventListener("click", () => restoreSuspendedSale(0));
 cancelSaleButton?.addEventListener("click", handleCancelSale);
 
-addNoteButton?.addEventListener("click", () => {
-  if (!noteModal) {
+posNotes.initNotes({
+  addNoteButton,
+  noteModal,
+  noteInput,
+  noteForm,
+  state,
+  setFeedback,
+});
+
+posShortcuts.registerShortcuts({
+  onFinish: () => finishSaleButton?.click(),
+  onManagerDiscount: () => applyManagerDiscountButton?.click(),
+  onRemoveFirst: () => document.querySelector(".js-remove-item")?.click(),
+  onSuspend: () => suspendSaleButton?.click(),
+  onResume: () => resumeSaleButton?.click(),
+});
+
+finishSaleButton?.addEventListener("click", async () => {
+  if (!postJson) {
+    setFeedback("API indisponível para registrar a venda.", "danger");
     return;
   }
-  noteInput.value = state.saleNote || "";
-  noteModal.show();
-});
-
-noteForm?.addEventListener("submit", (event) => {
-  event.preventDefault();
-  state.saleNote = noteInput.value.trim();
-  noteModal.hide();
-  if (state.saleNote) {
-    setFeedback("Observação salva na venda atual.", "info");
+  if (state.items.length === 0) {
+    setFeedback("Nenhum item na venda.", "warning");
+    return;
   }
-});
-
-document.addEventListener("keydown", (event) => {
-  if (event.key === "F2") {
-    event.preventDefault();
-    finishSaleButton?.click();
+  const paymentMethod = paymentMethodSelect?.value || "Dinheiro";
+  try {
+    setFeedback("Registrando venda...", "info");
+    await posSales.finalizeSale({
+      postJson,
+      items: state.items,
+      paymentMethod,
+      getAdjustedQuantity,
+    });
+    setFeedback("Venda finalizada e registrada no estoque.", "success");
+    clearSale();
+    loadProducts();
+  } catch (error) {
+    setFeedback(error.message || "Erro ao registrar venda.", "danger");
   }
-  if (event.key === "F4") {
-    event.preventDefault();
-    applyManagerDiscountButton?.click();
-  }
-  if (event.key === "F8") {
-    event.preventDefault();
-    const firstRemove = document.querySelector(".js-remove-item");
-    firstRemove?.click();
-  }
-  if (event.key === "F6") {
-    event.preventDefault();
-    suspendSaleButton?.click();
-  }
-  if (event.key === "F9") {
-    event.preventDefault();
-    resumeSaleButton?.click();
-  }
-});
-
-finishSaleButton?.addEventListener("click", () => {
-  setFeedback("Venda finalizada. Pronto para próxima leitura.", "success");
-  clearSale();
 });
 
 focusBarcode();
 syncItemsFromDom();
 renderSuspendedSales();
+loadProducts();
+loadDevices();

@@ -12,35 +12,8 @@ let logCurrentPage = 1;
 let logPageLimit = 10;
 
 const { getJson } = window.apiClient || {};
-
-const formatStatus = (action) => {
-  if (["remove_item", "discount_override", "cancel_sale"].includes(action)) {
-    return { label: "Crítico", badge: "text-bg-danger", key: "critical" };
-  }
-  if (["approval_granted", "stock_loss"].includes(action)) {
-    return { label: "Atenção", badge: "text-bg-warning", key: "warning" };
-  }
-  return { label: "Ok", badge: "text-bg-success", key: "ok" };
-};
-
-const getModuleFromAction = (action) => {
-  if (["remove_item", "discount_override", "cancel_sale"].includes(action)) {
-    return { label: "Caixa", key: "caixa" };
-  }
-  if (["stock_loss", "stock_adjust"].includes(action)) {
-    return { label: "Estoque", key: "estoque" };
-  }
-  if (["discount_created", "discount_updated"].includes(action)) {
-    return { label: "Descontos", key: "descontos" };
-  }
-  if (["user_update"].includes(action)) {
-    return { label: "Usuários", key: "usuarios" };
-  }
-  if (["approval_granted"].includes(action)) {
-    return { label: "Aprovações", key: "aprovacoes" };
-  }
-  return { label: "Geral", key: "geral" };
-};
+const { sharedFormat, adminLogsUtils } = window;
+const { formatStatus, getModuleFromAction, filterLogs } = adminLogsUtils;
 
 const renderPagination = (totalItems) => {
   if (!logPagination) {
@@ -99,15 +72,11 @@ const applyFilters = () => {
   const search = (logSearch?.value || "").toLowerCase();
   const statusFilter = logStatus?.value || "all";
   const moduleFilter = logModule?.value || "all";
-  const filtered = logsCache.filter((log) => {
-    const status = formatStatus(log.action);
-    const module = getModuleFromAction(log.action);
-    const matchesStatus = statusFilter === "all" || status.key === statusFilter;
-    const matchesModule = moduleFilter === "all" || module.key === moduleFilter;
-    const matchesSearch =
-      log.action.toLowerCase().includes(search) ||
-      (log.performed_by_name || "").toLowerCase().includes(search);
-    return matchesStatus && matchesModule && matchesSearch;
+  const filtered = filterLogs({
+    logs: logsCache,
+    search,
+    statusFilter,
+    moduleFilter,
   });
   applyPagination(filtered);
 };
@@ -116,15 +85,11 @@ const getFilteredLogs = () => {
   const search = (logSearch?.value || "").toLowerCase();
   const statusFilter = logStatus?.value || "all";
   const moduleFilter = logModule?.value || "all";
-  return logsCache.filter((log) => {
-    const status = formatStatus(log.action);
-    const module = getModuleFromAction(log.action);
-    const matchesStatus = statusFilter === "all" || status.key === statusFilter;
-    const matchesModule = moduleFilter === "all" || module.key === moduleFilter;
-    const matchesSearch =
-      log.action.toLowerCase().includes(search) ||
-      (log.performed_by_name || "").toLowerCase().includes(search);
-    return matchesStatus && matchesModule && matchesSearch;
+  return filterLogs({
+    logs: logsCache,
+    search,
+    statusFilter,
+    moduleFilter,
   });
 };
 
@@ -194,14 +159,7 @@ logExport?.addEventListener("click", () => {
     return;
   }
   const header = ["Data", "Usuário", "Ação", "Módulo", "Status", "Detalhes"];
-  const csv = [header, ...rows].map((row) => row.map((cell) => `"${cell}"`).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "logs.csv";
-  link.click();
-  URL.revokeObjectURL(url);
+  sharedFormat.downloadCsv({ filename: "logs.csv", rows: [header, ...rows] });
 });
 
 if (logPageSize) {

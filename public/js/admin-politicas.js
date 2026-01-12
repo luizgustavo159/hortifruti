@@ -7,22 +7,12 @@ const settingLockMinutes = document.getElementById("setting-lock-minutes");
 const settingApprovalThreshold = document.getElementById("setting-approval-threshold");
 
 const { requestJson } = window.apiClient || {};
+const { sharedFeedback } = window;
 
-const setFeedback = (message, type) => {
-  if (!settingsFeedback) {
-    return;
-  }
-  settingsFeedback.textContent = message;
-  settingsFeedback.className = `alert alert-${type} mt-3`;
-};
+const setFeedback = (message, type) =>
+  sharedFeedback.setFeedback(settingsFeedback, message, type);
 
-const clearFeedback = () => {
-  if (!settingsFeedback) {
-    return;
-  }
-  settingsFeedback.textContent = "";
-  settingsFeedback.className = "alert d-none";
-};
+const clearFeedback = () => sharedFeedback.clearFeedback(settingsFeedback);
 
 const loadSettings = async () => {
   try {

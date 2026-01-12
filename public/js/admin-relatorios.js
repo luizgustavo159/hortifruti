@@ -17,53 +17,9 @@ const reportCategoryTable = document.getElementById("report-category-table");
 let chartInstance = null;
 
 const { getJson } = window.apiClient || {};
-
-const buildReportQuery = () => {
-  const params = new URLSearchParams();
-  if (reportStart?.value) {
-    params.set("start", reportStart.value);
-  }
-  if (reportEnd?.value) {
-    params.set("end", reportEnd.value);
-  }
-  const query = params.toString();
-  return query ? `?${query}` : "";
-};
-
-const formatCurrency = (value) =>
-  Number(value).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-
-const renderList = (element, items, emptyMessage) => {
-  if (!element) {
-    return;
-  }
-  if (!items.length) {
-    element.innerHTML = `<li class="text-muted">${emptyMessage}</li>`;
-    return;
-  }
-  element.innerHTML = items.map((item) => `<li>${item}</li>`).join("");
-};
-
-const renderTable = (element, items, emptyMessage) => {
-  if (!element) {
-    return;
-  }
-  if (!items.length) {
-    element.innerHTML = `<tr><td colspan="3" class="text-muted">${emptyMessage}</td></tr>`;
-    return;
-  }
-  element.innerHTML = items
-    .map(
-      (item) => `
-        <tr>
-          <td>${item.label}</td>
-          <td>${item.items}</td>
-          <td>${formatCurrency(item.total)}</td>
-        </tr>
-      `
-    )
-    .join("");
-};
+const { sharedFormat, adminReportsUtils } = window;
+const { buildReportQuery, renderList, renderTable } = adminReportsUtils;
+const formatCurrency = (value) => sharedFormat.formatCurrency(value);
 
 const renderChart = (sales, losses) => {
   if (!reportChart) {
@@ -97,7 +53,7 @@ const renderChart = (sales, losses) => {
 
 const refreshReports = async () => {
   try {
-    const query = buildReportQuery();
+    const query = buildReportQuery({ start: reportStart?.value, end: reportEnd?.value });
     const [summary, byOperator, byCategory] = await Promise.all([
       getJson(`/api/reports/summary${query}`),
       getJson(`/api/reports/by-operator${query}`),
@@ -127,7 +83,7 @@ const refreshReports = async () => {
       (byOperator || []).map((row) => ({
         label: row.name || "Sem operador",
         items: row.total_items || 0,
-        total: row.total_sales || 0,
+        total: formatCurrency(row.total_sales || 0),
       })),
       "Nenhum operador registrado."
     );
@@ -136,7 +92,7 @@ const refreshReports = async () => {
       (byCategory || []).map((row) => ({
         label: row.category || "Sem categoria",
         items: row.total_items || 0,
-        total: row.total_sales || 0,
+        total: formatCurrency(row.total_sales || 0),
       })),
       "Nenhuma categoria registrada."
     );
@@ -169,14 +125,7 @@ reportExportButton?.addEventListener("click", () => {
     ["Total de perdas", reportTotalLosses?.textContent || ""],
     ["Itens críticos", reportLowStock?.textContent || ""],
   ];
-  const csv = rows.map((row) => row.map((cell) => `"${cell}"`).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "relatorio.csv";
-  link.click();
-  URL.revokeObjectURL(url);
+  sharedFormat.downloadCsv({ filename: "relatorio.csv", rows });
 });
 
 refreshReports();
