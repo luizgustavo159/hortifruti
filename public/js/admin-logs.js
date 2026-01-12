@@ -12,6 +12,7 @@ let logCurrentPage = 1;
 let logPageLimit = 10;
 
 const { getJson } = window.apiClient || {};
+const { sharedFormat } = window;
 
 const formatStatus = (action) => {
   if (["remove_item", "discount_override", "cancel_sale"].includes(action)) {
@@ -194,14 +195,7 @@ logExport?.addEventListener("click", () => {
     return;
   }
   const header = ["Data", "Usuário", "Ação", "Módulo", "Status", "Detalhes"];
-  const csv = [header, ...rows].map((row) => row.map((cell) => `"${cell}"`).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "logs.csv";
-  link.click();
-  URL.revokeObjectURL(url);
+  sharedFormat.downloadCsv({ filename: "logs.csv", rows: [header, ...rows] });
 });
 
 if (logPageSize) {

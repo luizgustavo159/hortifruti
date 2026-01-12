@@ -17,6 +17,7 @@ const reportCategoryTable = document.getElementById("report-category-table");
 let chartInstance = null;
 
 const { getJson } = window.apiClient || {};
+const { sharedFormat } = window;
 
 const buildReportQuery = () => {
   const params = new URLSearchParams();
@@ -30,8 +31,7 @@ const buildReportQuery = () => {
   return query ? `?${query}` : "";
 };
 
-const formatCurrency = (value) =>
-  Number(value).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const formatCurrency = (value) => sharedFormat.formatCurrency(value);
 
 const renderList = (element, items, emptyMessage) => {
   if (!element) {
@@ -169,14 +169,7 @@ reportExportButton?.addEventListener("click", () => {
     ["Total de perdas", reportTotalLosses?.textContent || ""],
     ["Itens críticos", reportLowStock?.textContent || ""],
   ];
-  const csv = rows.map((row) => row.map((cell) => `"${cell}"`).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "relatorio.csv";
-  link.click();
-  URL.revokeObjectURL(url);
+  sharedFormat.downloadCsv({ filename: "relatorio.csv", rows });
 });
 
 refreshReports();

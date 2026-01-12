@@ -27,22 +27,12 @@ let pendingApprovalUserId = null;
 let activeSessionIds = [];
 
 const { requestJson } = window.apiClient || {};
+const { sharedFeedback } = window;
 
-const setFeedback = (element, message, type) => {
-  if (!element) {
-    return;
-  }
-  element.textContent = message;
-  element.className = `alert alert-${type} mt-3`;
-};
+const setFeedback = (element, message, type) =>
+  sharedFeedback.setFeedback(element, message, type);
 
-const clearFeedback = (element) => {
-  if (!element) {
-    return;
-  }
-  element.textContent = "";
-  element.className = "alert d-none";
-};
+const clearFeedback = (element) => sharedFeedback.clearFeedback(element);
 
 const renderUsers = (items) => {
   if (!usersTableBody) {
