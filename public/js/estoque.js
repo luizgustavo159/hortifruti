@@ -64,23 +64,10 @@ let productLookup = new Map();
 let suppliersCache = [];
 
 const { getJson, postJson, requestJson } = window.apiClient || {};
+const { stockUtils, stockCatalog, stockExports } = window;
 
-const resolveProductByName = async (name) => {
-  const normalized = name.trim().toLowerCase();
-  const match = productLookup.get(normalized);
-  if (match) {
-    return match;
-  }
-  const skuMatch = normalized.match(/\(([^)]+)\)$/);
-  if (skuMatch) {
-    const skuKey = skuMatch[1].trim().toLowerCase();
-    const skuProduct = productLookup.get(skuKey);
-    if (skuProduct) {
-      return skuProduct;
-    }
-  }
-  throw new Error("Produto não encontrado.");
-};
+const resolveProductByName = async (name) =>
+  stockCatalog.resolveProductByName({ name, productLookup });
 
 const ensureCategory = async (name) => {
   const categories = await getJson("/api/categories");
@@ -133,74 +120,10 @@ const updateLossReasonVisibility = () => {
   }
 };
 
-const normalizeValue = (value) => value.trim().toLowerCase();
-
-const parseDateValue = (value) => {
-  if (!value) {
-    return null;
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-  return parsed;
-};
-
-const formatDateValue = (value) => {
-  if (!value) {
-    return "-";
-  }
-  const [year, month, day] = value.split("-");
-  if (!year || !month || !day) {
-    return value;
-  }
-  return `${day}/${month}/${year}`;
-};
-
-const getDaysUntil = (value) => {
-  const date = parseDateValue(value);
-  if (!date) {
-    return null;
-  }
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const diff = date.getTime() - today.getTime();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
-};
-
-const getStockStatus = (product) => {
-  const minStock = Number(product.min_stock || 0);
-  const currentStock = Number(product.current_stock || 0);
-  if (minStock > 0 && currentStock <= minStock) {
-    return "Crítico";
-  }
-  const daysUntil = getDaysUntil(product.expires_at);
-  if (daysUntil !== null && daysUntil <= 7) {
-    return "Vencendo";
-  }
-  return "Ok";
-};
-
-const getStatusBadgeClass = (status) => {
-  if (status === "Crítico") {
-    return "badge text-bg-warning";
-  }
-  if (status === "Vencendo") {
-    return "badge text-bg-danger";
-  }
-  return "badge text-bg-success";
-};
+const { normalizeValue, formatDateValue, getDaysUntil, getStockStatus, getStatusBadgeClass } = stockUtils;
 
 const buildProductLookup = (products) => {
-  productLookup = new Map();
-  products.forEach((product) => {
-    if (product.name) {
-      productLookup.set(product.name.toLowerCase(), product);
-    }
-    if (product.sku) {
-      productLookup.set(product.sku.toLowerCase(), product);
-    }
-  });
+  productLookup = stockCatalog.buildProductLookup(products);
 };
 
 const renderExpiryPanels = () => {
@@ -661,54 +584,7 @@ const exportTable = (type) => {
     row.dataset.supplier || "",
   ]);
 
-  if (type === "pdf") {
-    const htmlRows = rows
-      .map(
-        (row) =>
-          `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`
-      )
-      .join("");
-    const exportWindow = window.open("", "_blank");
-    if (!exportWindow) {
-      window.alert("Não foi possível abrir a janela de exportação.");
-      return;
-    }
-    exportWindow.document.write(`
-      <html>
-        <head>
-          <title>Relatório de estoque</title>
-          <style>
-            body { font-family: Arial, sans-serif; padding: 24px; }
-            table { width: 100%; border-collapse: collapse; }
-            th, td { border: 1px solid #ddd; padding: 8px; font-size: 12px; }
-            th { background: #f5f5f5; text-align: left; }
-          </style>
-        </head>
-        <body>
-          <h3>Relatório de estoque</h3>
-          <table>
-            <thead>
-              <tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr>
-            </thead>
-            <tbody>${htmlRows}</tbody>
-          </table>
-        </body>
-      </html>
-    `);
-    exportWindow.document.close();
-    exportWindow.focus();
-    exportWindow.print();
-    return;
-  }
-
-  const csvContent = [headers.join(";"), ...rows.map((r) => r.join(";"))].join("\n");
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "estoque.csv";
-  link.click();
-  URL.revokeObjectURL(url);
+  stockExports.exportTable({ type, headers, rows });
 };
 
 const showFormError = (message) => {
