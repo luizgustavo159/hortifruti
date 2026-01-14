@@ -8,6 +8,8 @@ const pino = require("pino");
 const pinoHttp = require("pino-http");
 const db = require("../db");
 const config = require("../config");
+const notFound = require("./middleware/notFound");
+const errorHandler = require("./middleware/errorHandler");
 const {
   router,
   sendAlertNotification,
@@ -101,5 +103,7 @@ const limiter = rateLimit({
 
 app.use("/api", limiter);
 app.use(router);
+app.use(notFound);
+app.use(errorHandler(logger));
 
 module.exports = { app, db };

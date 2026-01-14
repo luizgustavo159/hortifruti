@@ -1,0 +1,20 @@
+{
+  "env": {
+    "node": true,
+    "es2021": true
+  },
+  "extends": ["eslint:recommended", "prettier"],
+  "parserOptions": {
+    "ecmaVersion": "latest"
+  },
+  "rules": {
+    "no-console": "off"
+  },
+  "ignorePatterns": [
+    "node_modules/",
+    "public/",
+    "frontend/",
+    "data/",
+    "migrations/"
+  ]
+}
