@@ -1,5 +1,13 @@
-const notFound = (req, res) => {
-  res.status(404).json({ message: "Rota não encontrada.", request_id: req.requestId });
+const { AppError, errorCodes } = require("../utils/errors");
+
+const notFound = (req, res, next) => {
+  next(
+    new AppError({
+      code: errorCodes.NOT_FOUND,
+      message: "Rota não encontrada.",
+      status: 404,
+    })
+  );
 };
 
 module.exports = notFound;

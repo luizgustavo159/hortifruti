@@ -1,10 +1,13 @@
 const express = require("express");
-const { body, validationResult } = require("express-validator");
+const { body } = require("express-validator");
 const db = require("../../db");
 const { authenticateToken, requireAdmin } = require("./middleware/auth");
 const { requireApproval, verifyApprovalToken } = require("./middleware/approvals");
 const { getSettings } = require("./utils/settings");
 const { logAudit } = require("./utils/audit");
+const validate = require("../middleware/validate");
+const { sendError } = require("../utils/responses");
+const { errorCodes } = require("../utils/errors");
 
 const router = express.Router();
 
@@ -16,12 +19,8 @@ router.post(
     body("item").trim().notEmpty().withMessage("Item é obrigatório."),
     body("reason").trim().notEmpty().withMessage("Motivo é obrigatório."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { item, reason } = req.body;
     logAudit({
       action: "remove_item",
@@ -41,22 +40,26 @@ router.post(
     body("subtotal").optional().isFloat({ min: 0 }).withMessage("Subtotal inválido."),
     body("reason").trim().notEmpty().withMessage("Motivo é obrigatório."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { amount, reason, subtotal = 0 } = req.body;
     const baseTotal = Number(subtotal) || 0;
     const discountPercent = baseTotal > 0 ? (Number(amount) / baseTotal) * 100 : 0;
     return getSettings(["max_discount", "approval_threshold"], (settings) => {
       const maxDiscount = Number(settings.max_discount || 0);
       if ((maxDiscount > 0 || Number(settings.approval_threshold || 0) > 0) && baseTotal <= 0 && Number(amount) > 0) {
-        return res.status(400).json({ message: "Subtotal obrigatório para validar o desconto." });
+        return sendError(res, req, {
+          status: 400,
+          code: errorCodes.INVALID_REQUEST,
+          message: "Subtotal obrigatório para validar o desconto.",
+        });
       }
       if (maxDiscount > 0 && discountPercent > maxDiscount) {
-        return res.status(403).json({ message: "Desconto acima do limite permitido." });
+        return sendError(res, req, {
+          status: 403,
+          code: errorCodes.FORBIDDEN,
+          message: "Desconto acima do limite permitido.",
+        });
       }
 
       const approvalThreshold = Number(settings.approval_threshold || 0);
@@ -76,7 +79,11 @@ router.post(
       if (needsApproval) {
         return verifyApprovalToken(approvalToken, "discount_override", (error, approval) => {
           if (error) {
-            return res.status(error.status).json({ message: error.message });
+            return sendError(res, req, {
+              status: error.status,
+              code: error.status === 401 ? errorCodes.UNAUTHORIZED : errorCodes.FORBIDDEN,
+              message: error.message,
+            });
           }
           return finalize(approval);
         });
@@ -95,12 +102,8 @@ router.post(
     body("reason").trim().notEmpty().withMessage("Motivo é obrigatório."),
     body("items").isInt({ min: 0 }).withMessage("Itens inválidos."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { reason, items } = req.body;
     logAudit({
       action: "cancel_sale",
@@ -115,7 +118,11 @@ router.post(
 router.get("/api/pos/devices", authenticateToken, (req, res) => {
   db.all("SELECT * FROM pos_devices ORDER BY created_at DESC", [], (err, rows) => {
     if (err) {
-      return res.status(500).json({ message: "Erro ao buscar dispositivos." });
+      return sendError(res, req, {
+        status: 500,
+        code: errorCodes.INTERNAL_ERROR,
+        message: "Erro ao buscar dispositivos.",
+      });
     }
     return res.json(rows);
   });
@@ -130,12 +137,8 @@ router.post(
     body("name").trim().notEmpty().withMessage("Nome é obrigatório."),
     body("connection").trim().notEmpty().withMessage("Conexão é obrigatória."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { type, name, connection, config: deviceConfig = "", active = 1 } = req.body;
 
     db.get(
@@ -143,7 +146,11 @@ router.post(
       [type, name, connection, JSON.stringify(deviceConfig), active ? 1 : 0],
       (err, row) => {
         if (err) {
-          return res.status(400).json({ message: "Erro ao cadastrar dispositivo." });
+          return sendError(res, req, {
+            status: 400,
+            code: errorCodes.INVALID_REQUEST,
+            message: "Erro ao cadastrar dispositivo.",
+          });
         }
         return res.status(201).json({ id: row.id });
       }

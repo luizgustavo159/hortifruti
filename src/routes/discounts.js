@@ -1,16 +1,23 @@
 const express = require("express");
-const { body, validationResult } = require("express-validator");
+const { body } = require("express-validator");
 const db = require("../../db");
 const { authenticateToken, requireManager } = require("./middleware/auth");
 const { getSettings } = require("./utils/settings");
 const { logAudit } = require("./utils/audit");
+const validate = require("../middleware/validate");
+const { sendError } = require("../utils/responses");
+const { errorCodes } = require("../utils/errors");
 
 const router = express.Router();
 
 router.get("/api/discounts", authenticateToken, requireManager, (req, res) => {
   db.all("SELECT * FROM discounts ORDER BY created_at DESC", [], (err, rows) => {
     if (err) {
-      return res.status(500).json({ message: "Erro ao buscar descontos." });
+      return sendError(res, req, {
+        status: 500,
+        code: errorCodes.INTERNAL_ERROR,
+        message: "Erro ao buscar descontos.",
+      });
     }
     return res.json(rows);
   });
@@ -28,21 +35,25 @@ router.post(
     body("buy_quantity").optional().isInt({ min: 0 }).withMessage("Quantidade inválida."),
     body("get_quantity").optional().isInt({ min: 0 }).withMessage("Quantidade inválida."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const payload = req.body;
     if (payload.type === "fixed_bundle" && (!payload.buy_quantity || !payload.value)) {
-      return res.status(400).json({ message: "Quantidade e preço do combo são obrigatórios." });
+      return sendError(res, req, {
+        status: 400,
+        code: errorCodes.INVALID_REQUEST,
+        message: "Quantidade e preço do combo são obrigatórios.",
+      });
     }
 
     return getSettings(["max_discount"], (settings) => {
       const maxDiscount = Number(settings.max_discount || 0);
       if (payload.type === "percent" && maxDiscount > 0 && Number(payload.value) > maxDiscount) {
-        return res.status(403).json({ message: "Desconto acima do limite permitido." });
+        return sendError(res, req, {
+          status: 403,
+          code: errorCodes.FORBIDDEN,
+          message: "Desconto acima do limite permitido.",
+        });
       }
 
       db.get(
@@ -71,7 +82,11 @@ router.post(
         ],
         (err, row) => {
           if (err) {
-            return res.status(500).json({ message: "Erro ao cadastrar desconto." });
+            return sendError(res, req, {
+              status: 500,
+              code: errorCodes.INTERNAL_ERROR,
+              message: "Erro ao cadastrar desconto.",
+            });
           }
           logAudit({
             action: "discount_created",
@@ -97,16 +112,17 @@ router.put(
     body("buy_quantity").optional().isInt({ min: 0 }).withMessage("Quantidade inválida."),
     body("get_quantity").optional().isInt({ min: 0 }).withMessage("Quantidade inválida."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
     const discountId = Number(req.params.id);
 
     db.get("SELECT * FROM discounts WHERE id = ?", [discountId], (err, discount) => {
       if (err || !discount) {
-        return res.status(404).json({ message: "Desconto não encontrado." });
+        return sendError(res, req, {
+          status: 404,
+          code: errorCodes.NOT_FOUND,
+          message: "Desconto não encontrado.",
+        });
       }
 
       const payload = req.body || {};
@@ -131,13 +147,21 @@ router.put(
       };
 
       if (updated.type === "fixed_bundle" && (!updated.buy_quantity || !updated.value)) {
-        return res.status(400).json({ message: "Quantidade e preço do combo são obrigatórios." });
+        return sendError(res, req, {
+          status: 400,
+          code: errorCodes.INVALID_REQUEST,
+          message: "Quantidade e preço do combo são obrigatórios.",
+        });
       }
 
       return getSettings(["max_discount"], (settings) => {
         const maxDiscount = Number(settings.max_discount || 0);
         if (updated.type === "percent" && maxDiscount > 0 && Number(updated.value) > maxDiscount) {
-          return res.status(403).json({ message: "Desconto acima do limite permitido." });
+          return sendError(res, req, {
+            status: 403,
+            code: errorCodes.FORBIDDEN,
+            message: "Desconto acima do limite permitido.",
+          });
         }
 
         db.run(
@@ -168,7 +192,11 @@ router.put(
           ],
           (updateErr) => {
             if (updateErr) {
-              return res.status(500).json({ message: "Erro ao atualizar desconto." });
+              return sendError(res, req, {
+                status: 500,
+                code: errorCodes.INTERNAL_ERROR,
+                message: "Erro ao atualizar desconto.",
+              });
             }
             logAudit({
               action: "discount_updated",

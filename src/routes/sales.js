@@ -1,9 +1,13 @@
 const express = require("express");
-const { body, validationResult } = require("express-validator");
+const { body } = require("express-validator");
 const db = require("../../db");
 const { authenticateToken } = require("./middleware/auth");
 const { getSettings } = require("./utils/settings");
 const { runWithTransaction } = require("./utils/transactions");
+const validate = require("../middleware/validate");
+const { sendError } = require("../utils/responses");
+const { errorCodes } = require("../utils/errors");
+const { calculateDiscountAmount } = require("../services/salesCalculator");
 
 const router = express.Router();
 
@@ -16,12 +20,8 @@ router.post(
     body("payment_method").trim().notEmpty().withMessage("Pagamento é obrigatório."),
     body("discount_id").optional().isInt({ min: 1 }).withMessage("Desconto inválido."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { product_id, quantity, payment_method, discount_id = null } = req.body;
     let responsePayload = null;
     let responseStatus = 201;
@@ -111,36 +111,12 @@ router.post(
             return;
           }
 
-          let discountAmount = 0;
-          if (discount.type === "percent") {
-            discountAmount = total * (Number(discount.value) / 100);
-          } else if (discount.type === "fixed") {
-            discountAmount = Number(discount.value);
-          } else if (discount.type === "buy_x_get_y") {
-            const buyQty = Number(discount.buy_quantity);
-            const getQty = Number(discount.get_quantity);
-            if (buyQty > 0 && quantity >= buyQty) {
-              discountAmount = Number(product.price) * getQty;
-            }
-          } else if (discount.type === "fixed_bundle") {
-            const bundleQty = Number(discount.buy_quantity);
-            const bundlePrice = Number(discount.value);
-            if (bundleQty > 0 && bundlePrice >= 0) {
-              const bundles = Math.floor(quantity / bundleQty);
-              const remainder = quantity % bundleQty;
-              const bundleTotal = bundles * bundlePrice;
-              const remainderTotal = remainder * Number(product.price);
-              discountAmount = total - (bundleTotal + remainderTotal);
-            }
-          }
-
-          if (discount.min_quantity && quantity < Number(discount.min_quantity)) {
-            discountAmount = 0;
-          }
-
-          if (discountAmount < 0) {
-            discountAmount = 0;
-          }
+          const discountAmount = calculateDiscountAmount({
+            discount,
+            quantity,
+            price: product.price,
+            total,
+          });
 
           getSettings(["max_discount"], (settings) => {
             const maxDiscount = Number(settings.max_discount || 0);
@@ -156,9 +132,17 @@ router.post(
     }, (transactionErr) => {
       if (transactionErr) {
         if (transactionErr.status) {
-          return res.status(transactionErr.status).json({ message: transactionErr.message });
+          return sendError(res, req, {
+            status: transactionErr.status,
+            code: errorCodes.INVALID_REQUEST,
+            message: transactionErr.message,
+          });
         }
-        return res.status(500).json({ message: "Erro ao registrar venda." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao registrar venda.",
+        });
       }
       return res.status(responseStatus).json(responsePayload);
     });

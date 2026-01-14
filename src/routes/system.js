@@ -1,13 +1,20 @@
 const express = require("express");
 const db = require("../../db");
 const { authenticateToken, requireAdmin } = require("./middleware/auth");
+const { sendError } = require("../utils/responses");
+const { errorCodes } = require("../utils/errors");
 
 const router = express.Router();
 
 router.get("/api/health", (req, res) => {
   db.get("SELECT 1 AS ok", [], (err) => {
     if (err) {
-      return res.status(500).json({ status: "error", db: "down", uptime: process.uptime() });
+      return sendError(res, req, {
+        status: 500,
+        code: errorCodes.INTERNAL_ERROR,
+        message: "Banco indisponível.",
+        details: { status: "error", db: "down", uptime: process.uptime() },
+      });
     }
     return res.json({ status: "ok", db: "ok", uptime: process.uptime() });
   });
@@ -22,7 +29,11 @@ router.get("/api/metrics", authenticateToken, requireAdmin, (req, res) => {
     [],
     (err, row) => {
       if (err) {
-        return res.status(500).json({ message: "Erro ao buscar métricas." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao buscar métricas.",
+        });
       }
       return res.json({
         total_requests: req.requestMetrics?.total || 0,
@@ -42,7 +53,11 @@ router.get("/api/alerts", authenticateToken, requireAdmin, (req, res) => {
     [safeLimit],
     (err, rows) => {
       if (err) {
-        return res.status(500).json({ message: "Erro ao buscar alertas." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao buscar alertas.",
+        });
       }
       return res.json(rows);
     }

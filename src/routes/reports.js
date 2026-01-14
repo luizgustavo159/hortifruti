@@ -2,6 +2,8 @@ const express = require("express");
 const db = require("../../db");
 const { authenticateToken, requireManager } = require("./middleware/auth");
 const { parseDateRange, buildDateFilter } = require("./utils/dateFilters");
+const { sendError } = require("../utils/responses");
+const { errorCodes } = require("../utils/errors");
 
 const router = express.Router();
 
@@ -16,7 +18,11 @@ router.get("/api/reports/summary", authenticateToken, (req, res) => {
     salesFilter.params,
     (salesErr, salesRow) => {
       if (salesErr) {
-        return res.status(500).json({ message: "Erro ao gerar relatório." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao gerar relatório.",
+        });
       }
 
       const lossFilter = buildDateFilter("stock_losses.created_at", range);
@@ -28,7 +34,11 @@ router.get("/api/reports/summary", authenticateToken, (req, res) => {
         lossFilter.params,
         (lossErr, lossRow) => {
           if (lossErr) {
-            return res.status(500).json({ message: "Erro ao gerar relatório." });
+            return sendError(res, req, {
+              status: 500,
+              code: errorCodes.INTERNAL_ERROR,
+              message: "Erro ao gerar relatório.",
+            });
           }
 
           db.all(
@@ -38,7 +48,11 @@ router.get("/api/reports/summary", authenticateToken, (req, res) => {
             [],
             (stockErr, lowStockRows) => {
               if (stockErr) {
-                return res.status(500).json({ message: "Erro ao gerar relatório." });
+                return sendError(res, req, {
+                  status: 500,
+                  code: errorCodes.INTERNAL_ERROR,
+                  message: "Erro ao gerar relatório.",
+                });
               }
 
               db.all(
@@ -50,7 +64,11 @@ router.get("/api/reports/summary", authenticateToken, (req, res) => {
                 [],
                 (expErr, expRows) => {
                   if (expErr) {
-                    return res.status(500).json({ message: "Erro ao gerar relatório." });
+                    return sendError(res, req, {
+                      status: 500,
+                      code: errorCodes.INTERNAL_ERROR,
+                      message: "Erro ao gerar relatório.",
+                    });
                   }
 
                   return res.json({
@@ -80,7 +98,11 @@ router.get("/api/audit-logs", authenticateToken, requireManager, (req, res) => {
     [],
     (err, rows) => {
       if (err) {
-        return res.status(500).json({ message: "Erro ao buscar logs." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao buscar logs.",
+        });
       }
       return res.json(rows);
     }
@@ -103,7 +125,11 @@ router.get("/api/reports/by-operator", authenticateToken, requireManager, (req, 
     salesFilter.params,
     (err, rows) => {
       if (err) {
-        return res.status(500).json({ message: "Erro ao gerar relatório." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao gerar relatório.",
+        });
       }
       return res.json(rows);
     }
@@ -127,7 +153,11 @@ router.get("/api/reports/by-category", authenticateToken, requireManager, (req, 
     salesFilter.params,
     (err, rows) => {
       if (err) {
-        return res.status(500).json({ message: "Erro ao gerar relatório." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao gerar relatório.",
+        });
       }
       return res.json(rows);
     }

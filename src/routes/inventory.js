@@ -1,11 +1,14 @@
 const express = require("express");
-const { body, validationResult } = require("express-validator");
+const { body } = require("express-validator");
 const db = require("../../db");
 const { authenticateToken, requireManager, requireSupervisor } = require("./middleware/auth");
 const { verifyApprovalToken } = require("./middleware/approvals");
 const { getSettings } = require("./utils/settings");
 const { logAudit } = require("./utils/audit");
 const { runWithTransaction } = require("./utils/transactions");
+const validate = require("../middleware/validate");
+const { sendError } = require("../utils/responses");
+const { errorCodes } = require("../utils/errors");
 
 const router = express.Router();
 
@@ -19,7 +22,11 @@ router.get("/api/products", authenticateToken, (req, res) => {
     [],
     (err, rows) => {
       if (err) {
-        return res.status(500).json({ message: "Erro ao buscar produtos." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao buscar produtos.",
+        });
       }
       return res.json(rows);
     }
@@ -36,12 +43,8 @@ router.post(
     body("unit_type").trim().notEmpty().withMessage("Unidade é obrigatória."),
     body("price").isFloat({ min: 0 }).withMessage("Preço inválido."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const payload = req.body;
     db.get(
       `INSERT INTO products
@@ -61,7 +64,11 @@ router.post(
       ],
       (err, row) => {
         if (err) {
-          return res.status(400).json({ message: "Erro ao cadastrar produto." });
+          return sendError(res, req, {
+            status: 400,
+            code: errorCodes.INVALID_REQUEST,
+            message: "Erro ao cadastrar produto.",
+          });
         }
         return res.status(201).json({ id: row.id });
       }
@@ -77,12 +84,8 @@ router.post(
     body("quantity").isInt({ min: 1 }).withMessage("Quantidade inválida."),
     body("reason").trim().notEmpty().withMessage("Motivo é obrigatório."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { product_id, quantity, reason } = req.body;
 
     return getSettings(["max_losses"], (settings) => {
@@ -90,7 +93,11 @@ router.post(
       if (maxLosses > 0 && quantity > maxLosses) {
         return verifyApprovalToken(req.headers["x-approval-token"], "stock_loss", (error) => {
           if (error) {
-            return res.status(error.status).json({ message: error.message });
+            return sendError(res, req, {
+              status: error.status,
+              code: error.status === 401 ? errorCodes.UNAUTHORIZED : errorCodes.FORBIDDEN,
+              message: error.message,
+            });
           }
           return saveLoss();
         });
@@ -150,9 +157,17 @@ router.post(
       }, (transactionErr) => {
         if (transactionErr) {
           if (transactionErr.status) {
-            return res.status(transactionErr.status).json({ message: transactionErr.message });
+            return sendError(res, req, {
+              status: transactionErr.status,
+              code: errorCodes.INVALID_REQUEST,
+              message: transactionErr.message,
+            });
           }
-          return res.status(500).json({ message: "Erro ao registrar perda." });
+          return sendError(res, req, {
+            status: 500,
+            code: errorCodes.INTERNAL_ERROR,
+            message: "Erro ao registrar perda.",
+          });
         }
         logAudit({
           action: "stock_loss",
@@ -174,11 +189,8 @@ router.post(
     body("delta").isInt().withMessage("Delta inválido."),
     body("reason").trim().notEmpty().withMessage("Motivo é obrigatório."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
     const { product_id, delta, reason } = req.body;
 
     return getSettings(["max_stock_adjust"], (settings) => {
@@ -186,7 +198,11 @@ router.post(
       if (maxStockAdjust > 0 && Math.abs(Number(delta)) > maxStockAdjust) {
         return verifyApprovalToken(req.headers["x-approval-token"], "stock_adjust", (error) => {
           if (error) {
-            return res.status(error.status).json({ message: error.message });
+            return sendError(res, req, {
+              status: error.status,
+              code: error.status === 401 ? errorCodes.UNAUTHORIZED : errorCodes.FORBIDDEN,
+              message: error.message,
+            });
           }
           return saveAdjustment();
         });
@@ -237,9 +253,17 @@ router.post(
       }, (transactionErr) => {
         if (transactionErr) {
           if (transactionErr.status) {
-            return res.status(transactionErr.status).json({ message: transactionErr.message });
+            return sendError(res, req, {
+              status: transactionErr.status,
+              code: errorCodes.INVALID_REQUEST,
+              message: transactionErr.message,
+            });
           }
-          return res.status(500).json({ message: "Erro ao ajustar estoque." });
+          return sendError(res, req, {
+            status: 500,
+            code: errorCodes.INTERNAL_ERROR,
+            message: "Erro ao ajustar estoque.",
+          });
         }
         logAudit({
           action: "stock_adjust",
@@ -261,11 +285,8 @@ router.post(
     body("type").isIn(["inbound", "outbound"]).withMessage("Tipo inválido."),
     body("reason").trim().notEmpty().withMessage("Motivo é obrigatório."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
     const { product_id, quantity, type, reason } = req.body;
 
     runWithTransaction((tx, finish) => {
@@ -310,9 +331,17 @@ router.post(
     }, (transactionErr) => {
       if (transactionErr) {
         if (transactionErr.status) {
-          return res.status(transactionErr.status).json({ message: transactionErr.message });
+          return sendError(res, req, {
+            status: transactionErr.status,
+            code: errorCodes.INVALID_REQUEST,
+            message: transactionErr.message,
+          });
         }
-        return res.status(500).json({ message: "Erro ao registrar movimentação." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao registrar movimentação.",
+        });
       }
       logAudit({
         action: "stock_move",
@@ -336,7 +365,11 @@ router.get("/api/stock/loss", authenticateToken, (req, res) => {
     [safeLimit],
     (err, rows) => {
       if (err) {
-        return res.status(500).json({ message: "Erro ao buscar perdas." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao buscar perdas.",
+        });
       }
       return res.json(rows);
     }
@@ -361,7 +394,11 @@ router.get("/api/stock/movements", authenticateToken, (req, res) => {
     params,
     (err, rows) => {
       if (err) {
-        return res.status(500).json({ message: "Erro ao buscar movimentações." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao buscar movimentações.",
+        });
       }
       return res.json(rows);
     }
@@ -380,7 +417,11 @@ router.get("/api/stock/restock-suggestions", authenticateToken, (req, res) => {
     [],
     (err, rows) => {
       if (err) {
-        return res.status(500).json({ message: "Erro ao buscar sugestões." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao buscar sugestões.",
+        });
       }
       return res.json(rows);
     }

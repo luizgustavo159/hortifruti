@@ -1,17 +1,32 @@
+const { sendError } = require("../../utils/responses");
+const { errorCodes } = require("../../utils/errors");
+
 const parseDateRange = (req, res) => {
   const { start, end } = req.query;
   const startDate = start ? new Date(start) : null;
   const endDate = end ? new Date(end) : null;
   if (start && Number.isNaN(startDate?.getTime())) {
-    res.status(400).json({ message: "Data inicial inválida." });
+    sendError(res, req, {
+      status: 400,
+      code: errorCodes.INVALID_REQUEST,
+      message: "Data inicial inválida.",
+    });
     return null;
   }
   if (end && Number.isNaN(endDate?.getTime())) {
-    res.status(400).json({ message: "Data final inválida." });
+    sendError(res, req, {
+      status: 400,
+      code: errorCodes.INVALID_REQUEST,
+      message: "Data final inválida.",
+    });
     return null;
   }
   if (startDate && endDate && startDate > endDate) {
-    res.status(400).json({ message: "Intervalo de datas inválido." });
+    sendError(res, req, {
+      status: 400,
+      code: errorCodes.INVALID_REQUEST,
+      message: "Intervalo de datas inválido.",
+    });
     return null;
   }
   return { start: start || null, end: end || null };

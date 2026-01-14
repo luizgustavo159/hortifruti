@@ -1,9 +1,12 @@
 const express = require("express");
-const { body, validationResult } = require("express-validator");
+const { body } = require("express-validator");
 const db = require("../../db");
 const { authenticateToken, requireManager } = require("./middleware/auth");
 const { logAudit } = require("./utils/audit");
 const { runWithTransaction } = require("./utils/transactions");
+const validate = require("../middleware/validate");
+const { sendError } = require("../utils/responses");
+const { errorCodes } = require("../utils/errors");
 
 const router = express.Router();
 
@@ -15,12 +18,8 @@ router.post(
     body("supplier_id").isInt({ min: 1 }).withMessage("Fornecedor inválido."),
     body("items").isArray({ min: 1 }).withMessage("Itens inválidos."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { supplier_id, items } = req.body;
 
     runWithTransaction((tx, finish) => {
@@ -54,7 +53,11 @@ router.post(
       );
     }, (transactionErr) => {
       if (transactionErr) {
-        return res.status(500).json({ message: "Erro ao criar pedido." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao criar pedido.",
+        });
       }
       return res.status(201).json({ status: "ok" });
     });
@@ -70,7 +73,11 @@ router.get("/api/purchase-orders", authenticateToken, requireManager, (req, res)
     [],
     (err, rows) => {
       if (err) {
-        return res.status(500).json({ message: "Erro ao buscar pedidos." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao buscar pedidos.",
+        });
       }
       return res.json(rows);
     }
@@ -87,7 +94,11 @@ router.get("/api/purchase-orders/:id/items", authenticateToken, requireManager, 
     [orderId],
     (err, rows) => {
       if (err) {
-        return res.status(500).json({ message: "Erro ao buscar itens." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao buscar itens.",
+        });
       }
       return res.json(rows);
     }
@@ -160,9 +171,11 @@ router.post(
       });
     }, (transactionErr) => {
       if (transactionErr) {
-        return res
-          .status(transactionErr.status || 500)
-          .json({ message: transactionErr.message || "Erro ao receber pedido." });
+        return sendError(res, req, {
+          status: transactionErr.status || 500,
+          code: transactionErr.status ? errorCodes.INVALID_REQUEST : errorCodes.INTERNAL_ERROR,
+          message: transactionErr.message || "Erro ao receber pedido.",
+        });
       }
       logAudit({
         action: "purchase_order_received",

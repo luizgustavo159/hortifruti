@@ -1,6 +1,8 @@
 const express = require("express");
 const db = require("../../db");
 const { authenticateToken, requireAdmin } = require("./middleware/auth");
+const { sendError } = require("../utils/responses");
+const { errorCodes } = require("../utils/errors");
 
 const router = express.Router();
 
@@ -12,7 +14,11 @@ router.get("/api/sessions", authenticateToken, requireAdmin, (req, res) => {
   const params = userId ? [userId] : [];
   db.all(sql, params, (err, rows) => {
     if (err) {
-      return res.status(500).json({ message: "Erro ao buscar sessões." });
+      return sendError(res, req, {
+        status: 500,
+        code: errorCodes.INTERNAL_ERROR,
+        message: "Erro ao buscar sessões.",
+      });
     }
     return res.json(rows);
   });
@@ -25,7 +31,11 @@ router.delete("/api/sessions/:id", authenticateToken, requireAdmin, (req, res) =
     [sessionId],
     (err) => {
       if (err) {
-        return res.status(500).json({ message: "Erro ao encerrar sessão." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao encerrar sessão.",
+        });
       }
       return res.json({ status: "ok" });
     }

@@ -1,25 +1,39 @@
 const jwt = require("jsonwebtoken");
 const db = require("../../../db");
 const config = require("../../../config");
+const { sendError } = require("../../utils/responses");
+const { errorCodes } = require("../../utils/errors");
 
 const { JWT_SECRET } = config;
 
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader) {
-    return res.status(401).json({ message: "Token não informado." });
+    return sendError(res, req, {
+      status: 401,
+      code: errorCodes.UNAUTHORIZED,
+      message: "Token não informado.",
+    });
   }
   const token = authHeader.replace("Bearer ", "");
   return jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
-      return res.status(403).json({ message: "Token inválido." });
+      return sendError(res, req, {
+        status: 403,
+        code: errorCodes.FORBIDDEN,
+        message: "Token inválido.",
+      });
     }
     db.get(
       "SELECT * FROM sessions WHERE token = ? AND revoked_at IS NULL",
       [token],
       (sessionErr, session) => {
         if (sessionErr || !session) {
-          return res.status(401).json({ message: "Sessão expirada." });
+          return sendError(res, req, {
+            status: 401,
+            code: errorCodes.UNAUTHORIZED,
+            message: "Sessão expirada.",
+          });
         }
         req.user = user;
         return next();
@@ -42,7 +56,11 @@ const hasRole = (user, role) => {
 
 const requireRole = (role) => (req, res, next) => {
   if (!hasRole(req.user, role)) {
-    return res.status(403).json({ message: "Acesso não autorizado." });
+    return sendError(res, req, {
+      status: 403,
+      code: errorCodes.FORBIDDEN,
+      message: "Acesso não autorizado.",
+    });
   }
   return next();
 };

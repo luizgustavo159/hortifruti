@@ -4,7 +4,11 @@ Todas as respostas de erro seguem o formato:
 
 ```json
 {
-  "message": "Mensagem do erro",
+  "error": {
+    "code": "CODIGO_DO_ERRO",
+    "message": "Mensagem do erro",
+    "details": []
+  },
   "request_id": "uuid"
 }
 ```
@@ -12,5 +16,5 @@ Todas as respostas de erro seguem o formato:
 ## Regras
 
 - `request_id` vem do middleware de logging.
-- Mensagens internas não devem vazar para produção.
-- Use `err.status` para definir status HTTP quando aplicável.
+- `error.code` identifica o tipo de falha para o cliente.
+- `error.details` contém detalhes de validação quando aplicável.

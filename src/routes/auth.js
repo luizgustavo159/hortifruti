@@ -2,7 +2,7 @@ const express = require("express");
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { body, validationResult } = require("express-validator");
+const { body } = require("express-validator");
 const db = require("../../db");
 const config = require("../../config");
 const { authenticateToken } = require("./middleware/auth");
@@ -11,6 +11,9 @@ const { logAudit } = require("./utils/audit");
 const { getSettings } = require("./utils/settings");
 const { hashToken } = require("./utils/tokens");
 const { runWithTransaction } = require("./utils/transactions");
+const validate = require("../middleware/validate");
+const { sendError } = require("../utils/responses");
+const { errorCodes } = require("../utils/errors");
 
 const router = express.Router();
 
@@ -27,12 +30,8 @@ router.post(
       .matches(/^[0-9()+\-\s]{6,20}$/)
       .withMessage("Telefone inválido."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { name, email, password, phone = null } = req.body;
     const passwordHash = bcrypt.hashSync(password, 10);
 
@@ -41,7 +40,11 @@ router.post(
       [name, email, phone, passwordHash],
       (err, row) => {
         if (err) {
-          return res.status(400).json({ message: "Email já cadastrado." });
+          return sendError(res, req, {
+            status: 409,
+            code: errorCodes.CONFLICT,
+            message: "Email já cadastrado.",
+          });
         }
         return res.status(201).json({ id: row.id, name, email, phone });
       }
@@ -60,25 +63,38 @@ router.post(
       .matches(/^[0-9()+\-\s]{6,20}$/)
       .withMessage("Telefone inválido."),
   ],
+  validate,
   (req, res) => {
     if (!ADMIN_BOOTSTRAP_TOKEN) {
-      return res.status(500).json({ message: "Bootstrap não configurado." });
+      return sendError(res, req, {
+        status: 500,
+        code: errorCodes.INTERNAL_ERROR,
+        message: "Bootstrap não configurado.",
+      });
     }
     const bootstrapToken = req.headers["x-bootstrap-token"];
     if (bootstrapToken !== ADMIN_BOOTSTRAP_TOKEN) {
-      return res.status(403).json({ message: "Token de bootstrap inválido." });
-    }
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+      return sendError(res, req, {
+        status: 403,
+        code: errorCodes.FORBIDDEN,
+        message: "Token de bootstrap inválido.",
+      });
     }
 
     db.get("SELECT id FROM users WHERE role = 'admin' LIMIT 1", [], (err, row) => {
       if (err) {
-        return res.status(500).json({ message: "Erro ao verificar administradores." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao verificar administradores.",
+        });
       }
       if (row) {
-        return res.status(409).json({ message: "Administrador já configurado." });
+        return sendError(res, req, {
+          status: 409,
+          code: errorCodes.CONFLICT,
+          message: "Administrador já configurado.",
+        });
       }
 
       const { name, email, password, phone = null } = req.body;
@@ -90,7 +106,11 @@ router.post(
         [name, email, phone, passwordHash, "admin", JSON.stringify(permissions)],
         (insertErr, row) => {
           if (insertErr) {
-            return res.status(500).json({ message: "Erro ao criar administrador." });
+            return sendError(res, req, {
+              status: 500,
+              code: errorCodes.INTERNAL_ERROR,
+              message: "Erro ao criar administrador.",
+            });
           }
           logAudit({
             action: "admin_bootstrap",
@@ -109,14 +129,22 @@ router.post("/api/auth/logout", authenticateToken, (req, res) => {
   const authHeader = req.headers.authorization;
   const token = authHeader ? authHeader.replace("Bearer ", "") : null;
   if (!token) {
-    return res.status(400).json({ message: "Token não informado." });
+    return sendError(res, req, {
+      status: 400,
+      code: errorCodes.INVALID_REQUEST,
+      message: "Token não informado.",
+    });
   }
   db.run(
     "UPDATE sessions SET revoked_at = CURRENT_TIMESTAMP WHERE token = ?",
     [token],
     (err) => {
       if (err) {
-        return res.status(500).json({ message: "Erro ao encerrar sessão." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao encerrar sessão.",
+        });
       }
       return res.json({ status: "ok" });
     }
@@ -126,11 +154,8 @@ router.post("/api/auth/logout", authenticateToken, (req, res) => {
 router.post(
   "/api/auth/request-password-reset",
   [body("email").isEmail().withMessage("Email inválido.")],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
     const { email } = req.body;
     db.get("SELECT id, email, phone FROM users WHERE email = ?", [email], (err, user) => {
       if (err || !user) {
@@ -139,7 +164,11 @@ router.post(
       const hasEmailChannel = Boolean(config.SMTP_HOST && config.RESET_EMAIL_FROM && user.email);
       const hasSmsChannel = Boolean(config.RESET_SMS_WEBHOOK_URL && user.phone);
       if (!hasEmailChannel && !hasSmsChannel) {
-        return res.status(500).json({ message: "Canal de reset não configurado." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Canal de reset não configurado.",
+        });
       }
       const token = crypto.randomBytes(20).toString("hex");
       const tokenHash = hashToken(token);
@@ -151,7 +180,11 @@ router.post(
         [user.id, tokenHash, expiresAt],
         (insertErr) => {
           if (insertErr) {
-            return res.status(500).json({ message: "Erro ao criar reset." });
+            return sendError(res, req, {
+              status: 500,
+              code: errorCodes.INTERNAL_ERROR,
+              message: "Erro ao criar reset.",
+            });
           }
           sendPasswordResetNotification({ user, token, expiresAt })
             .then(() => {
@@ -163,9 +196,12 @@ router.post(
               return res.json({ status: "ok" });
             })
             .catch((notifyErr) => {
-              return res
-                .status(500)
-                .json({ message: "Erro ao enviar reset.", detail: notifyErr.message });
+              return sendError(res, req, {
+                status: 500,
+                code: errorCodes.INTERNAL_ERROR,
+                message: "Erro ao enviar reset.",
+                details: { detail: notifyErr.message },
+              });
             });
         }
       );
@@ -179,11 +215,8 @@ router.post(
     body("token").trim().notEmpty().withMessage("Token é obrigatório."),
     body("password").isLength({ min: 8 }).withMessage("Senha deve ter 8+ caracteres."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
     const { token, password } = req.body;
     const tokenHash = hashToken(token);
     db.get(
@@ -191,11 +224,19 @@ router.post(
       [tokenHash],
       (err, reset) => {
         if (err || !reset) {
-          return res.status(400).json({ message: "Token inválido." });
+          return sendError(res, req, {
+            status: 400,
+            code: errorCodes.INVALID_REQUEST,
+            message: "Token inválido.",
+          });
         }
         const expiresAt = new Date(reset.expires_at);
         if (Number.isNaN(expiresAt.getTime()) || expiresAt < new Date()) {
-          return res.status(400).json({ message: "Token expirado." });
+          return sendError(res, req, {
+            status: 400,
+            code: errorCodes.INVALID_REQUEST,
+            message: "Token expirado.",
+          });
         }
 
         const passwordHash = bcrypt.hashSync(password, 10);
@@ -233,7 +274,11 @@ router.post(
           );
         }, (transactionErr) => {
           if (transactionErr) {
-            return res.status(500).json({ message: "Erro ao atualizar senha." });
+            return sendError(res, req, {
+              status: 500,
+              code: errorCodes.INTERNAL_ERROR,
+              message: "Erro ao atualizar senha.",
+            });
           }
           logAudit({
             action: "password_reset_completed",
@@ -253,26 +298,34 @@ router.post(
     body("email").isEmail().withMessage("Email inválido."),
     body("password").notEmpty().withMessage("Senha é obrigatória."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { email, password } = req.body;
     const ip = req.ip;
     db.get("SELECT * FROM users WHERE email = ?", [email], (err, user) => {
       if (err || !user) {
-        return res.status(401).json({ message: "Credenciais inválidas." });
+        return sendError(res, req, {
+          status: 401,
+          code: errorCodes.UNAUTHORIZED,
+          message: "Credenciais inválidas.",
+        });
       }
       if (user.locked_until) {
         const lockedUntil = new Date(user.locked_until);
         if (!Number.isNaN(lockedUntil.getTime()) && lockedUntil > new Date()) {
-          return res.status(403).json({ message: "Usuário bloqueado temporariamente." });
+          return sendError(res, req, {
+            status: 403,
+            code: errorCodes.FORBIDDEN,
+            message: "Usuário bloqueado temporariamente.",
+          });
         }
       }
       if (!user.is_active) {
-        return res.status(403).json({ message: "Usuário inativo." });
+        return sendError(res, req, {
+          status: 403,
+          code: errorCodes.FORBIDDEN,
+          message: "Usuário inativo.",
+        });
       }
 
       const valid = bcrypt.compareSync(password, user.password_hash);
@@ -295,9 +348,17 @@ router.post(
                   if (attempts >= maxAttempts) {
                     const lockedUntil = new Date(Date.now() + lockMinutes * 60 * 1000).toISOString();
                     db.run("UPDATE users SET locked_until = ? WHERE email = ?", [lockedUntil, email]);
-                    return res.status(403).json({ message: "Usuário bloqueado por tentativas." });
+                    return sendError(res, req, {
+                      status: 403,
+                      code: errorCodes.FORBIDDEN,
+                      message: "Usuário bloqueado por tentativas.",
+                    });
                   }
-                  return res.status(401).json({ message: "Credenciais inválidas." });
+                  return sendError(res, req, {
+                    status: 401,
+                    code: errorCodes.UNAUTHORIZED,
+                    message: "Credenciais inválidas.",
+                  });
                 }
               );
             }
@@ -317,7 +378,11 @@ router.post(
         [user.id, token],
         (sessionErr) => {
           if (sessionErr) {
-            return res.status(500).json({ message: "Erro ao criar sessão." });
+            return sendError(res, req, {
+              status: 500,
+              code: errorCodes.INTERNAL_ERROR,
+              message: "Erro ao criar sessão.",
+            });
           }
           return res.json({ token });
         }

@@ -17,3 +17,9 @@
 - Verificar logs via `stdout`/`stderr` (Pino).
 - Acompanhar métricas na tabela `request_metrics`.
 - Alertas são registrados em `alerts`.
+
+## SLA e operação
+
+- Disponibilidade alvo: 99.5% mensal.
+- RTO (recuperação): 30 minutos.
+- RPO (perda aceitável): 15 minutos.

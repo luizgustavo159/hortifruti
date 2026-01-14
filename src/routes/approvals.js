@@ -1,11 +1,14 @@
 const express = require("express");
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
-const { body, validationResult } = require("express-validator");
+const { body } = require("express-validator");
 const db = require("../../db");
 const { hasRole } = require("./middleware/auth");
 const { hashToken } = require("./utils/tokens");
 const { logAudit } = require("./utils/audit");
+const validate = require("../middleware/validate");
+const { sendError } = require("../utils/responses");
+const { errorCodes } = require("../utils/errors");
 
 const router = express.Router();
 
@@ -18,23 +21,31 @@ router.post(
       .isIn(["remove_item", "discount_override", "cancel_sale", "user_update", "stock_loss", "stock_adjust"])
       .withMessage("Ação inválida."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { email, password, action, reason = "", metadata = {} } = req.body;
     db.get("SELECT * FROM users WHERE email = ?", [email], (err, user) => {
       if (err || !user) {
-        return res.status(401).json({ message: "Credenciais inválidas." });
+        return sendError(res, req, {
+          status: 401,
+          code: errorCodes.UNAUTHORIZED,
+          message: "Credenciais inválidas.",
+        });
       }
       if (!hasRole(user, "manager")) {
-        return res.status(403).json({ message: "Aprovação requer gerente ou admin." });
+        return sendError(res, req, {
+          status: 403,
+          code: errorCodes.FORBIDDEN,
+          message: "Aprovação requer gerente ou admin.",
+        });
       }
       const valid = bcrypt.compareSync(password, user.password_hash);
       if (!valid) {
-        return res.status(401).json({ message: "Credenciais inválidas." });
+        return sendError(res, req, {
+          status: 401,
+          code: errorCodes.UNAUTHORIZED,
+          message: "Credenciais inválidas.",
+        });
       }
 
       const token = crypto.randomBytes(16).toString("hex");
@@ -46,7 +57,11 @@ router.post(
         [tokenHash, action, reason, JSON.stringify(metadata), user.id, expiresAt],
         function handleInsert(err) {
           if (err) {
-            return res.status(500).json({ message: "Erro ao registrar aprovação." });
+            return sendError(res, req, {
+              status: 500,
+              code: errorCodes.INTERNAL_ERROR,
+              message: "Erro ao registrar aprovação.",
+            });
           }
           logAudit({
             action: "approval_granted",

@@ -1,9 +1,12 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
-const { body, validationResult } = require("express-validator");
+const { body } = require("express-validator");
 const db = require("../../db");
 const { authenticateToken, requireAdmin } = require("./middleware/auth");
 const { logAudit } = require("./utils/audit");
+const validate = require("../middleware/validate");
+const { sendError } = require("../utils/responses");
+const { errorCodes } = require("../utils/errors");
 
 const router = express.Router();
 
@@ -13,7 +16,11 @@ router.get("/api/users", authenticateToken, requireAdmin, (req, res) => {
     [],
     (err, rows) => {
       if (err) {
-        return res.status(500).json({ message: "Erro ao buscar usuários." });
+        return sendError(res, req, {
+          status: 500,
+          code: errorCodes.INTERNAL_ERROR,
+          message: "Erro ao buscar usuários.",
+        });
       }
       const users = rows.map((row) => ({
         ...row,
@@ -34,12 +41,8 @@ router.post(
     body("password").isLength({ min: 8 }).withMessage("Senha deve ter 8+ caracteres."),
     body("role").isIn(["operator", "supervisor", "manager", "admin"]).withMessage("Perfil inválido."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { name, email, phone = "", password, role, permissions = [] } = req.body;
     const passwordHash = bcrypt.hashSync(password, 10);
 
@@ -48,7 +51,11 @@ router.post(
       [name, email, phone, passwordHash, role, JSON.stringify(permissions)],
       (err, row) => {
         if (err) {
-          return res.status(400).json({ message: "Email já cadastrado." });
+          return sendError(res, req, {
+            status: 409,
+            code: errorCodes.CONFLICT,
+            message: "Email já cadastrado.",
+          });
         }
         logAudit({ action: "user_created", details: { id: row.id, email }, performedBy: req.user.id });
         return res.status(201).json({ id: row.id });
@@ -67,16 +74,16 @@ router.put(
     body("role").optional().isIn(["operator", "supervisor", "manager", "admin"]).withMessage("Perfil inválido."),
     body("password").optional().isLength({ min: 8 }).withMessage("Senha inválida."),
   ],
+  validate,
   (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const userId = Number(req.params.id);
     db.get("SELECT * FROM users WHERE id = ?", [userId], (err, user) => {
       if (err || !user) {
-        return res.status(404).json({ message: "Usuário não encontrado." });
+        return sendError(res, req, {
+          status: 404,
+          code: errorCodes.NOT_FOUND,
+          message: "Usuário não encontrado.",
+        });
       }
 
       const payload = req.body || {};
@@ -104,7 +111,11 @@ router.put(
         ],
         (updateErr) => {
           if (updateErr) {
-            return res.status(500).json({ message: "Erro ao atualizar usuário." });
+            return sendError(res, req, {
+              status: 500,
+              code: errorCodes.INTERNAL_ERROR,
+              message: "Erro ao atualizar usuário.",
+            });
           }
           logAudit({
             action: "user_update",

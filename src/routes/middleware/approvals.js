@@ -1,5 +1,7 @@
 const db = require("../../../db");
 const { hashToken } = require("../utils/tokens");
+const { sendError } = require("../utils/responses");
+const { errorCodes } = require("../utils/errors");
 
 const verifyApprovalToken = (token, action, callback) => {
   if (!token) {
@@ -30,7 +32,11 @@ const requireApproval = (action) => (req, res, next) => {
   const token = req.headers["x-approval-token"];
   verifyApprovalToken(token, action, (error, approval) => {
     if (error) {
-      return res.status(error.status).json({ message: error.message });
+      return sendError(res, req, {
+        status: error.status,
+        code: error.status === 401 ? errorCodes.UNAUTHORIZED : errorCodes.FORBIDDEN,
+        message: error.message,
+      });
     }
     req.approval = approval;
     return next();
