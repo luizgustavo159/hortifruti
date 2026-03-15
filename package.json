@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node scripts/migrate.js && node server.js",
     "migrate": "node scripts/migrate.js",
-    "test": "jest"
+    "test": "jest",
+    "test:pg": "USE_IN_MEMORY_DB=false jest --runInBand"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
