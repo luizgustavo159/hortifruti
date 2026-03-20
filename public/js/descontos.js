@@ -53,6 +53,14 @@ const resetFeedback = () => {
   discountFeedback.textContent = "";
 };
 
+const parseResponse = async (response) => {
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    return response.json();
+  }
+  return {};
+};
+
 const fetchJson = async (url, options = {}) => {
   const token = getToken();
   const response = await fetch(url, {
@@ -62,7 +70,7 @@ const fetchJson = async (url, options = {}) => {
     },
     ...options,
   });
-  const data = await response.json();
+  const data = await parseResponse(response);
   if (!response.ok) {
     throw new Error(data.message || "Erro na requisição.");
   }
@@ -571,6 +579,10 @@ discountForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   resetFeedback();
   const payload = buildPayload();
+  const submitButton = discountForm?.querySelector('button[type="submit"]');
+  if (submitButton) {
+    submitButton.disabled = true;
+  }
 
   try {
     if (editingDiscountId) {
@@ -597,6 +609,10 @@ discountForm?.addEventListener("submit", async (event) => {
     await refreshDiscounts();
   } catch (error) {
     setFeedback(error.message || "Erro ao salvar promoção.", "danger");
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+    }
   }
 });
 

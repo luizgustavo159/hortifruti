@@ -6,12 +6,20 @@ const pendingListEl = document.getElementById("admin-pending-list");
 
 const getToken = () => localStorage.getItem("greenstore_token");
 
+const parseResponse = async (response) => {
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    return response.json();
+  }
+  return {};
+};
+
 const fetchJson = async (url) => {
   const token = getToken();
   const response = await fetch(url, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
-  const data = await response.json();
+  const data = await parseResponse(response);
   if (!response.ok) {
     throw new Error(data.message || "Erro na requisição.");
   }
@@ -36,7 +44,14 @@ const renderPendings = ({ lowStock = [], expiringProducts = [] }) => {
   pendingListEl.innerHTML = items.map((item) => `<li>${item}</li>`).join("");
 };
 
+const setLoadingState = () => {
+  if (pendingListEl) {
+    pendingListEl.innerHTML = "<li class=\"text-muted\">Carregando pendências...</li>";
+  }
+};
+
 const refreshDashboard = async () => {
+  setLoadingState();
   try {
     const [users, logs, summary] = await Promise.all([
       fetchJson("/api/users"),
@@ -72,7 +87,7 @@ const refreshDashboard = async () => {
     });
   } catch (error) {
     if (pendingListEl) {
-      pendingListEl.innerHTML = "<li class=\"text-danger\">Erro ao carregar pendências.</li>";
+      pendingListEl.innerHTML = `<li class=\"text-danger\">${error.message || "Erro ao carregar pendências."}</li>`;
     }
   }
 };
