@@ -26,6 +26,12 @@ let JWT_SECRET = process.env.JWT_SECRET || "";
 const NODE_ENV = process.env.NODE_ENV || "development";
 const LOG_LEVEL = process.env.LOG_LEVEL || "info";
 const ADMIN_BOOTSTRAP_TOKEN = process.env.ADMIN_BOOTSTRAP_TOKEN || "";
+
+if (NODE_ENV === "production") {
+  if (!ADMIN_BOOTSTRAP_TOKEN || ADMIN_BOOTSTRAP_TOKEN.length < 32) {
+    throw new Error("ADMIN_BOOTSTRAP_TOKEN deve ter ao menos 32 caracteres em produção.");
+  }
+}
 const PASSWORD_RESET_TTL_MINUTES = Number(process.env.PASSWORD_RESET_TTL_MINUTES || 30);
 const ALERT_SLOW_THRESHOLD_MS = Number(process.env.ALERT_SLOW_THRESHOLD_MS || 2000);
 const METRICS_ENABLED = process.env.METRICS_ENABLED !== "false";
