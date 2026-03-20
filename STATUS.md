@@ -92,7 +92,7 @@
 - [x] Definir SLO/SLA e runbooks de incidente.
 - [x] Validar backup/restore com rotina recorrente.
 - [x] Executar teste de carga para pico de vendas.
-- [ ] Endurecer gestão de segredos e auditoria de permissões.
+- [x] Endurecer gestão de segredos e auditoria de permissões.
 - [x] Automatizar deploy/rollback com gates de qualidade.
 
 ### Front-end
@@ -146,3 +146,5 @@
 - Pipeline CI com PostgreSQL real e execução de testes de integração.
 - Documentação operacional adicionada: SLO/SLA, runbook de incidentes e guia de deploy/rollback.
 - Script de validação de backup/restore e script de teste de carga adicionados.
+- Hardening de `ADMIN_BOOTSTRAP_TOKEN` em produção e teste automatizado de ambiente.
+- Melhorias de UX em telas administrativas (loading e prevenção de envio duplicado).
