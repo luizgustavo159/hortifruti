@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: greenstore_test
+          POSTGRES_USER: greenstore
+          POSTGRES_PASSWORD: greenstore
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U greenstore -d greenstore_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      JWT_SECRET: test-secret-test-secret-test-secret
+      CORS_ORIGIN: http://localhost
+      METRICS_ENABLED: "false"
+      DATABASE_URL: postgres://greenstore:greenstore@localhost:5432/greenstore_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run default tests (in-memory)
+        run: npm test -- --runInBand
+
+      - name: Run migrations on PostgreSQL
+        run: npm run migrate
+
+      - name: Run integration tests on PostgreSQL
+        run: npm run test:pg
