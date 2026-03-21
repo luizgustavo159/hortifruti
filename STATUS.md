@@ -150,3 +150,4 @@
 - Melhorias de UX em telas administrativas (loading e prevenção de envio duplicado).
 - Smoke test de páginas frontend adicionado (home, caixa, estoque, descontos e admin/perfil).
 - Acessibilidade inicial: `aria-live`/`role` em feedbacks críticos do front.
+- Testes de contrato iniciais adicionados para autenticação e validações da API de vendas.

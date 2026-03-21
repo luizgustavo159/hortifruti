@@ -89,9 +89,16 @@ const execute = (sql, params = []) => {
       password_hash: passwordHash,
       role,
       is_active: 1,
+      locked_until: null,
     };
     state.users.push(row);
     return { rows: [clone(row)] };
+  }
+
+  if (normalized.startsWith("select * from users where email")) {
+    const [email] = params;
+    const row = state.users.find((user) => user.email === email) || null;
+    return { rows: row ? [clone(row)] : [] };
   }
 
   if (normalized.startsWith("insert into sessions")) {
