@@ -201,6 +201,18 @@ const getIdempotencyKey = (req) => {
   return key.trim().slice(0, 128);
 };
 
+const isIdempotencyConflictError = (err) => {
+  if (!err) {
+    return false;
+  }
+  const code = String(err.code || "");
+  if (code === "23505" || code === "SQLITE_CONSTRAINT") {
+    return true;
+  }
+  const message = String(err.message || "").toLowerCase();
+  return message.includes("unique") || message.includes("constraint");
+};
+
 const withIdempotency = (req, res, endpoint, handler) => {
   const requestKey = getIdempotencyKey(req);
   if (!requestKey) {
@@ -231,7 +243,30 @@ const withIdempotency = (req, res, endpoint, handler) => {
           [req.user.id, endpoint, requestKey, status, JSON.stringify(payload)],
           (storeErr) => {
             if (storeErr) {
-              done(storeErr);
+              if (!isIdempotencyConflictError(storeErr)) {
+                done(storeErr);
+                return;
+              }
+              db.get(
+                "SELECT response_status, response_body FROM idempotency_keys WHERE user_id = ? AND endpoint = ? AND request_key = ?",
+                [req.user.id, endpoint, requestKey],
+                (retryLookupErr, retryCached) => {
+                  if (retryLookupErr || !retryCached) {
+                    done(storeErr);
+                    return;
+                  }
+                  let retryPayload = {};
+                  try {
+                    retryPayload = JSON.parse(retryCached.response_body);
+                  } catch {
+                    retryPayload = { message: "Resposta em cache indisponível." };
+                  }
+                  done(null, {
+                    status: Number(retryCached.response_status) || 200,
+                    payload: retryPayload,
+                  });
+                }
+              );
               return;
             }
             done(null);
@@ -2139,9 +2174,12 @@ app.post(
           return res.status(responseStatus).json(responsePayload);
         }
 
-        return persistIdempotentResponse(responseStatus, responsePayload, (idempotencyErr) => {
+        return persistIdempotentResponse(responseStatus, responsePayload, (idempotencyErr, cachedResponse) => {
           if (idempotencyErr) {
             return res.status(500).json({ message: "Erro ao registrar venda." });
+          }
+          if (cachedResponse) {
+            return res.status(cachedResponse.status).json(cachedResponse.payload);
           }
           return res.status(responseStatus).json(responsePayload);
         });
