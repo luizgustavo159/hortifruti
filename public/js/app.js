@@ -1,6 +1,7 @@
 const form = document.getElementById("login-form");
 const responseBox = document.getElementById("api-response");
 const loginFeedback = document.getElementById("login-feedback");
+const ui = window.GreenStoreUI || null;
 
 const getToken = () => localStorage.getItem("greenstore_token");
 const setToken = (token) => localStorage.setItem("greenstore_token", token);
@@ -50,9 +51,12 @@ form?.addEventListener("submit", async (event) => {
   const formData = new FormData(form);
   const payload = Object.fromEntries(formData.entries());
   const submitButton = form?.querySelector('button[type="submit"]');
-  if (submitButton) {
-    submitButton.disabled = true;
-  }
+  ui?.setButtonLoading(submitButton, {
+    isLoading: true,
+    idleText: "Entrar",
+    loadingText: "Entrando...",
+  });
+  ui?.setFeedback(loginFeedback, { message: "Autenticando...", type: "secondary" });
 
   try {
     if (responseBox) {
@@ -61,23 +65,15 @@ form?.addEventListener("submit", async (event) => {
 
     const loginData = await postJson("/api/auth/login", payload);
     setToken(loginData.token);
-    if (loginFeedback) {
-      loginFeedback.className = "alert alert-success mt-3";
-      loginFeedback.textContent = "Login efetuado com sucesso.";
-    }
+    ui?.setFeedback(loginFeedback, { message: "Login efetuado com sucesso.", type: "success" });
     renderResponse({ login: "ok" });
     window.setTimeout(() => {
       window.location.replace("/caixa.html");
     }, 600);
   } catch (error) {
-    if (loginFeedback) {
-      loginFeedback.className = "alert alert-danger mt-3";
-      loginFeedback.textContent = "Não foi possível autenticar.";
-    }
+    ui?.setFeedback(loginFeedback, { message: "Não foi possível autenticar.", type: "danger" });
     return handleError(error.message || "Erro de conexão com a API.");
   } finally {
-    if (submitButton) {
-      submitButton.disabled = false;
-    }
+    ui?.setButtonLoading(submitButton, { isLoading: false, idleText: "Entrar" });
   }
 });

@@ -26,6 +26,7 @@ const productPickerCount = document.getElementById("discount-product-count");
 const productPickerSearch = document.getElementById("product-picker-search");
 const productPickerList = document.getElementById("product-picker-list");
 const productPickerApply = document.getElementById("product-picker-apply");
+const ui = window.GreenStoreUI || null;
 
 let discountsCache = [];
 let productsCache = [];
@@ -38,19 +39,11 @@ let pageSize = 10;
 const getToken = () => localStorage.getItem("greenstore_token");
 
 const setFeedback = (message, type) => {
-  if (!discountFeedback) {
-    return;
-  }
-  discountFeedback.textContent = message;
-  discountFeedback.className = `alert alert-${type} mt-3`;
+  ui?.setFeedback(discountFeedback, { message, type, prefixClass: "mt-3" });
 };
 
 const resetFeedback = () => {
-  if (!discountFeedback) {
-    return;
-  }
-  discountFeedback.className = "alert d-none";
-  discountFeedback.textContent = "";
+  ui?.setFeedback(discountFeedback, { hidden: true });
 };
 
 const parseResponse = async (response) => {
@@ -580,9 +573,11 @@ discountForm?.addEventListener("submit", async (event) => {
   resetFeedback();
   const payload = buildPayload();
   const submitButton = discountForm?.querySelector('button[type="submit"]');
-  if (submitButton) {
-    submitButton.disabled = true;
-  }
+  ui?.setButtonLoading(submitButton, {
+    isLoading: true,
+    idleText: "Salvar promoção",
+    loadingText: "Salvando...",
+  });
 
   try {
     if (editingDiscountId) {
@@ -610,9 +605,7 @@ discountForm?.addEventListener("submit", async (event) => {
   } catch (error) {
     setFeedback(error.message || "Erro ao salvar promoção.", "danger");
   } finally {
-    if (submitButton) {
-      submitButton.disabled = false;
-    }
+    ui?.setButtonLoading(submitButton, { isLoading: false, idleText: "Salvar promoção" });
   }
 });
 

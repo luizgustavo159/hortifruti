@@ -152,3 +152,4 @@
 - Acessibilidade inicial: `aria-live`/`role` em feedbacks críticos do front.
 - Testes de contrato iniciais adicionados para autenticação e validações da API de vendas.
 - Cobertura de contrato ampliada com cenários RBAC (acesso negado para operador e permitido para admin em rotas administrativas).
+- Frontend: estado de carregamento e feedback padronizado para login e formulário de promoções via utilitário de UI compartilhado.
