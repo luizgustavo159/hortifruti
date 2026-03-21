@@ -6,6 +6,9 @@ process.env.CORS_ORIGIN = "http://localhost";
 process.env.METRICS_ENABLED = "false";
 
 const fs = require("fs");
+if (process.env.USE_IN_MEMORY_DB !== "false") {
+  jest.mock("../db", () => require("../test-utils/in-memory-db"));
+}
 const path = require("path");
 const request = require("supertest");
 const bcrypt = require("bcryptjs");
@@ -56,6 +59,7 @@ const resetDatabase = () =>
       DELETE FROM login_attempts;
       DELETE FROM request_metrics;
       DELETE FROM alerts;
+      DELETE FROM idempotency_keys;
       DELETE FROM settings;
       DELETE FROM products;
       DELETE FROM categories;
@@ -143,4 +147,129 @@ describe("stock and sales flows", () => {
     const product = await get("SELECT current_stock FROM products WHERE id = ?", [productId]);
     expect(product.current_stock).toBe(5);
   });
+
+
+  it("records weighted sale with decimal quantity", async () => {
+    const { token } = await createUserWithSession({ role: "operator" });
+    const { productId } = await createProduct({ stock: 8, price: 10 });
+
+    const response = await request(app)
+      .post("/api/sales")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ product_id: productId, quantity: 1.5, payment_method: "dinheiro" });
+
+    expect(response.status).toBe(201);
+    expect(response.body.total).toBe(15);
+    expect(response.body.final_total).toBe(15);
+
+    const product = await get("SELECT current_stock FROM products WHERE id = ?", [productId]);
+    expect(product.current_stock).toBe(6.5);
+  });
+
+  it("keeps sales idempotent when request key repeats", async () => {
+    const { token } = await createUserWithSession({ role: "operator" });
+    const { productId } = await createProduct({ stock: 8, price: 4 });
+
+    const idempotencyKey = "sale-idempotent-001";
+    const payload = { product_id: productId, quantity: 3, payment_method: "dinheiro" };
+
+    const firstResponse = await request(app)
+      .post("/api/sales")
+      .set("Authorization", `Bearer ${token}`)
+      .set("x-idempotency-key", idempotencyKey)
+      .send(payload);
+
+    const secondResponse = await request(app)
+      .post("/api/sales")
+      .set("Authorization", `Bearer ${token}`)
+      .set("x-idempotency-key", idempotencyKey)
+      .send(payload);
+
+    expect(firstResponse.status).toBe(201);
+    expect(secondResponse.status).toBe(201);
+    expect(secondResponse.body).toEqual(firstResponse.body);
+
+    const product = await get("SELECT current_stock FROM products WHERE id = ?", [productId]);
+    expect(product.current_stock).toBe(5);
+  });
+
+  it("returns cached sale when idempotency insert hits unique conflict", async () => {
+    const { token } = await createUserWithSession({ role: "operator" });
+    const { productId } = await createProduct({ stock: 8, price: 4 });
+    const idempotencyKey = "sale-idempotent-race";
+    const payload = { product_id: productId, quantity: 2, payment_method: "dinheiro" };
+
+    const originalGet = db.get.bind(db);
+    const originalRun = db.run.bind(db);
+    let forceConflict = false;
+    let firstLookupDone = false;
+    let syntheticCache = null;
+
+    db.get = (sql, params, callback) => {
+      const normalizedSql = String(sql).toLowerCase();
+      if (
+        forceConflict &&
+        !firstLookupDone &&
+        normalizedSql.includes("from idempotency_keys") &&
+        normalizedSql.startsWith("select response_status, response_body")
+      ) {
+        firstLookupDone = true;
+        callback(null, undefined);
+        return;
+      }
+      if (
+        forceConflict &&
+        firstLookupDone &&
+        normalizedSql.includes("from idempotency_keys") &&
+        normalizedSql.startsWith("select response_status, response_body")
+      ) {
+        callback(null, syntheticCache);
+        return;
+      }
+      originalGet(sql, params, callback);
+    };
+
+    db.run = (sql, params, callback) => {
+      const normalizedSql = String(sql).toLowerCase();
+      if (
+        forceConflict &&
+        normalizedSql.startsWith("insert into idempotency_keys")
+      ) {
+        callback({ code: "23505", message: "duplicate key value violates unique constraint" });
+        return;
+      }
+      originalRun(sql, params, callback);
+    };
+
+    try {
+      const firstResponse = await request(app)
+        .post("/api/sales")
+        .set("Authorization", `Bearer ${token}`)
+        .set("x-idempotency-key", idempotencyKey)
+        .send(payload);
+
+      syntheticCache = {
+        response_status: firstResponse.status,
+        response_body: JSON.stringify(firstResponse.body),
+      };
+      forceConflict = true;
+
+      const secondResponse = await request(app)
+        .post("/api/sales")
+        .set("Authorization", `Bearer ${token}`)
+        .set("x-idempotency-key", idempotencyKey)
+        .send(payload);
+
+      expect(firstResponse.status).toBe(201);
+      expect(secondResponse.status).toBe(201);
+      expect(secondResponse.body).toEqual(firstResponse.body);
+
+      const product = await get("SELECT current_stock FROM products WHERE id = ?", [productId]);
+      expect(product.current_stock).toBe(4);
+    } finally {
+      db.get = originalGet;
+      db.run = originalRun;
+    }
+  });
+
 });

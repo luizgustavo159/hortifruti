@@ -28,6 +28,7 @@ const noteModalElement = document.getElementById("noteModal");
 const noteForm = document.getElementById("note-form");
 const noteInput = document.getElementById("sale-note");
 const addNoteButton = document.getElementById("add-note");
+const ui = window.GreenStoreUI || null;
 
 const approvalModal = approvalModalElement
   ? new bootstrap.Modal(approvalModalElement)
@@ -41,14 +42,12 @@ const state = {
   suspendedSales: [],
   discountTotal: 0,
   saleNote: "",
+  finishingSale: false,
+  productsByName: {},
 };
 
 const setFeedback = (message, type = "secondary") => {
-  if (!feedback) {
-    return;
-  }
-  feedback.className = `alert alert-${type} mt-3`;
-  feedback.textContent = message;
+  ui?.setFeedback(feedback, { message, type, prefixClass: "mt-3" });
 };
 
 const formatCurrency = (value) =>
@@ -65,6 +64,110 @@ const parseCurrency = (value) =>
 const parseNumber = (value, fallback = 0) => {
   const parsed = parseCurrency(value);
   return Number.isNaN(parsed) ? fallback : parsed;
+};
+
+const parseResponse = async (response) => {
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    return response.json();
+  }
+  return {};
+};
+
+const setFinishButtonState = (loading) => {
+  ui?.setButtonLoading(finishSaleButton, {
+    isLoading: loading,
+    idleText: "Finalizar venda (F2)",
+    loadingText: "Finalizando...",
+  });
+};
+
+const getIdempotencyKey = () => {
+  if (window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
+const loadProductsCatalog = async () => {
+  const token = getToken();
+  if (!token) {
+    return;
+  }
+  try {
+    const response = await fetch("/api/products", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await parseResponse(response);
+    if (!response.ok || !Array.isArray(data)) {
+      return;
+    }
+    state.productsByName = data.reduce((acc, product) => {
+      acc[product.name] = product;
+      return acc;
+    }, {});
+  } catch {
+    state.productsByName = {};
+  }
+};
+
+const submitSale = async () => {
+  if (state.finishingSale) {
+    return;
+  }
+  if (!state.items.length) {
+    setFeedback("Adicione ao menos um item para finalizar a venda.", "warning");
+    return;
+  }
+
+  const token = getToken();
+  if (!token) {
+    setFeedback("Sessão expirada. Faça login novamente.", "danger");
+    return;
+  }
+
+  state.finishingSale = true;
+  setFinishButtonState(true);
+  try {
+    if (!Object.keys(state.productsByName).length) {
+      await loadProductsCatalog();
+    }
+
+    for (const item of state.items) {
+      const product = state.productsByName[item.name];
+      if (!product?.id) {
+        throw new Error(`Produto ${item.name} não encontrado no catálogo.`);
+      }
+      const quantity = item.weight > 0
+        ? Math.max(Number(item.weight || 0), 0.001)
+        : Math.max(Number(item.quantity || 0), 1);
+      const response = await fetch("/api/sales", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "x-idempotency-key": getIdempotencyKey(),
+        },
+        body: JSON.stringify({
+          product_id: product.id,
+          quantity,
+          payment_method: "dinheiro",
+        }),
+      });
+      const data = await parseResponse(response);
+      if (!response.ok) {
+        throw new Error(data.message || "Não foi possível finalizar a venda.");
+      }
+    }
+
+    setFeedback("Venda finalizada e registrada no servidor.", "success");
+    clearSale();
+  } catch (error) {
+    setFeedback(error.message || "Não foi possível finalizar a venda.", "danger");
+  } finally {
+    state.finishingSale = false;
+    setFinishButtonState(false);
+  }
 };
 
 const getItemTotal = (item) => {
@@ -511,11 +614,10 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-finishSaleButton?.addEventListener("click", () => {
-  setFeedback("Venda finalizada. Pronto para próxima leitura.", "success");
-  clearSale();
-});
+finishSaleButton?.addEventListener("click", submitSale);
 
+loadProductsCatalog();
 focusBarcode();
 syncItemsFromDom();
 renderSuspendedSales();
+setFinishButtonState(false);

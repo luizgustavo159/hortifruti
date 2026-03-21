@@ -1,0 +1,2 @@
+ALTER TABLE sales
+  ALTER COLUMN quantity TYPE NUMERIC(12,3) USING quantity::NUMERIC(12,3);

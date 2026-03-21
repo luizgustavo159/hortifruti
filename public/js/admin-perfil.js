@@ -20,6 +20,7 @@ const approvalEmail = document.getElementById("approval-email");
 const approvalPassword = document.getElementById("approval-password");
 const approvalReason = document.getElementById("approval-reason");
 const userApprovalFeedback = document.getElementById("user-approval-feedback");
+const ui = window.GreenStoreUI || null;
 
 let usersCache = [];
 let pendingUpdatePayload = null;
@@ -27,6 +28,14 @@ let pendingApprovalUserId = null;
 let activeSessionIds = [];
 
 const getToken = () => localStorage.getItem("greenstore_token");
+
+const parseResponse = async (response) => {
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    return response.json();
+  }
+  return {};
+};
 
 const fetchJson = async (url, options = {}) => {
   const token = getToken();
@@ -41,7 +50,7 @@ const fetchJson = async (url, options = {}) => {
       ...(options.headers || {}),
     },
   });
-  const data = await response.json();
+  const data = await parseResponse(response);
   if (!response.ok) {
     throw new Error(data.message || "Erro na requisição.");
   }
@@ -49,19 +58,11 @@ const fetchJson = async (url, options = {}) => {
 };
 
 const setFeedback = (element, message, type) => {
-  if (!element) {
-    return;
-  }
-  element.textContent = message;
-  element.className = `alert alert-${type} mt-3`;
+  ui?.setFeedback(element, { message, type, prefixClass: "mt-3" });
 };
 
 const clearFeedback = (element) => {
-  if (!element) {
-    return;
-  }
-  element.textContent = "";
-  element.className = "alert d-none";
+  ui?.setFeedback(element, { hidden: true });
 };
 
 const renderUsers = (items) => {
@@ -158,6 +159,9 @@ const applyFilters = () => {
 };
 
 const loadUsers = async () => {
+  if (usersTableBody) {
+    usersTableBody.innerHTML = `<tr><td colspan="5" class="text-muted">Carregando usuários...</td></tr>`;
+  }
   try {
     const data = await fetchJson("/api/users");
     usersCache = data.map((user) => ({
@@ -175,6 +179,12 @@ userForm?.addEventListener("submit", async (event) => {
   clearFeedback(userFormFeedback);
   const payload = Object.fromEntries(new FormData(userForm).entries());
   payload.permissions = getPermissionsFromForm("permissions");
+  const submitButton = userForm.querySelector('button[type="submit"]');
+  ui?.setButtonLoading(submitButton, {
+    isLoading: true,
+    idleText: "Salvar usuário",
+    loadingText: "Salvando...",
+  });
   try {
     await fetchJson("/api/users", { method: "POST", body: JSON.stringify(payload) });
     setFeedback(userFormFeedback, "Usuário criado com sucesso.", "success");
@@ -183,6 +193,8 @@ userForm?.addEventListener("submit", async (event) => {
     await loadUsers();
   } catch (error) {
     setFeedback(userFormFeedback, error.message || "Erro ao criar usuário.", "danger");
+  } finally {
+    ui?.setButtonLoading(submitButton, { isLoading: false, idleText: "Salvar usuário" });
   }
 });
 
@@ -212,6 +224,12 @@ usersTableBody?.addEventListener("click", (event) => {
 userEditForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   clearFeedback(userEditFeedback);
+  const submitButton = userEditForm.querySelector('button[type="submit"]');
+  ui?.setButtonLoading(submitButton, {
+    isLoading: true,
+    idleText: "Salvar alterações",
+    loadingText: "Salvando...",
+  });
   const payload = {
     name: editName.value,
     email: editEmail.value,
@@ -232,6 +250,7 @@ userEditForm?.addEventListener("submit", async (event) => {
     clearFeedback(userApprovalFeedback);
     const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById("userApprovalModal"));
     modal.show();
+    ui?.setButtonLoading(submitButton, { isLoading: false, idleText: "Salvar alterações" });
     return;
   }
   try {
@@ -243,6 +262,8 @@ userEditForm?.addEventListener("submit", async (event) => {
     await loadUsers();
   } catch (error) {
     setFeedback(userEditFeedback, error.message || "Erro ao atualizar usuário.", "danger");
+  } finally {
+    ui?.setButtonLoading(submitButton, { isLoading: false, idleText: "Salvar alterações" });
   }
 });
 
@@ -252,6 +273,12 @@ userApprovalForm?.addEventListener("submit", async (event) => {
   if (!pendingUpdatePayload || !pendingApprovalUserId) {
     return;
   }
+  const submitButton = userApprovalForm.querySelector('button[type="submit"]');
+  ui?.setButtonLoading(submitButton, {
+    isLoading: true,
+    idleText: "Confirmar aprovação",
+    loadingText: "Confirmando...",
+  });
   try {
     const approval = await fetchJson("/api/approvals", {
       method: "POST",
@@ -277,6 +304,8 @@ userApprovalForm?.addEventListener("submit", async (event) => {
     await loadUsers();
   } catch (error) {
     setFeedback(userApprovalFeedback, error.message || "Erro na aprovação.", "danger");
+  } finally {
+    ui?.setButtonLoading(submitButton, { isLoading: false, idleText: "Confirmar aprovação" });
   }
 });
 
@@ -284,6 +313,7 @@ revokeSessionsButton?.addEventListener("click", async () => {
   if (!activeSessionIds.length) {
     return;
   }
+  revokeSessionsButton.disabled = true;
   try {
     await Promise.all(
       activeSessionIds.map((sessionId) =>
@@ -293,6 +323,8 @@ revokeSessionsButton?.addEventListener("click", async () => {
     await renderUserSessions(editUserId.value);
   } catch (error) {
     setFeedback(userEditFeedback, error.message || "Erro ao encerrar sessões.", "danger");
+  } finally {
+    revokeSessionsButton.disabled = false;
   }
 });
 

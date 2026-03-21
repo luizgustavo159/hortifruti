@@ -6,6 +6,9 @@ process.env.CORS_ORIGIN = "http://localhost";
 process.env.METRICS_ENABLED = "false";
 
 const fs = require("fs");
+if (process.env.USE_IN_MEMORY_DB !== "false") {
+  jest.mock("../db", () => require("../test-utils/in-memory-db"));
+}
 const path = require("path");
 const request = require("supertest");
 const { app, db } = require("../server");

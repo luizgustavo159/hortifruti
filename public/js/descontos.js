@@ -26,6 +26,7 @@ const productPickerCount = document.getElementById("discount-product-count");
 const productPickerSearch = document.getElementById("product-picker-search");
 const productPickerList = document.getElementById("product-picker-list");
 const productPickerApply = document.getElementById("product-picker-apply");
+const ui = window.GreenStoreUI || null;
 
 let discountsCache = [];
 let productsCache = [];
@@ -38,19 +39,19 @@ let pageSize = 10;
 const getToken = () => localStorage.getItem("greenstore_token");
 
 const setFeedback = (message, type) => {
-  if (!discountFeedback) {
-    return;
-  }
-  discountFeedback.textContent = message;
-  discountFeedback.className = `alert alert-${type} mt-3`;
+  ui?.setFeedback(discountFeedback, { message, type, prefixClass: "mt-3" });
 };
 
 const resetFeedback = () => {
-  if (!discountFeedback) {
-    return;
+  ui?.setFeedback(discountFeedback, { hidden: true });
+};
+
+const parseResponse = async (response) => {
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    return response.json();
   }
-  discountFeedback.className = "alert d-none";
-  discountFeedback.textContent = "";
+  return {};
 };
 
 const fetchJson = async (url, options = {}) => {
@@ -62,7 +63,7 @@ const fetchJson = async (url, options = {}) => {
     },
     ...options,
   });
-  const data = await response.json();
+  const data = await parseResponse(response);
   if (!response.ok) {
     throw new Error(data.message || "Erro na requisição.");
   }
@@ -571,6 +572,12 @@ discountForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   resetFeedback();
   const payload = buildPayload();
+  const submitButton = discountForm?.querySelector('button[type="submit"]');
+  ui?.setButtonLoading(submitButton, {
+    isLoading: true,
+    idleText: "Salvar promoção",
+    loadingText: "Salvando...",
+  });
 
   try {
     if (editingDiscountId) {
@@ -597,6 +604,8 @@ discountForm?.addEventListener("submit", async (event) => {
     await refreshDiscounts();
   } catch (error) {
     setFeedback(error.message || "Erro ao salvar promoção.", "danger");
+  } finally {
+    ui?.setButtonLoading(submitButton, { isLoading: false, idleText: "Salvar promoção" });
   }
 });
 
