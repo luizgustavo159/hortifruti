@@ -26,6 +26,12 @@ let JWT_SECRET = process.env.JWT_SECRET || "";
 const NODE_ENV = process.env.NODE_ENV || "development";
 const LOG_LEVEL = process.env.LOG_LEVEL || "info";
 const ADMIN_BOOTSTRAP_TOKEN = process.env.ADMIN_BOOTSTRAP_TOKEN || "";
+
+if (NODE_ENV === "production") {
+  if (!ADMIN_BOOTSTRAP_TOKEN || ADMIN_BOOTSTRAP_TOKEN.length < 32) {
+    throw new Error("ADMIN_BOOTSTRAP_TOKEN deve ter ao menos 32 caracteres em produção.");
+  }
+}
 const PASSWORD_RESET_TTL_MINUTES = Number(process.env.PASSWORD_RESET_TTL_MINUTES || 30);
 const ALERT_SLOW_THRESHOLD_MS = Number(process.env.ALERT_SLOW_THRESHOLD_MS || 2000);
 const METRICS_ENABLED = process.env.METRICS_ENABLED !== "false";
@@ -186,6 +192,90 @@ const requireManager = requireRole("manager");
 const requireSupervisor = requireRole("supervisor");
 
 const hashToken = (token) => crypto.createHash("sha256").update(token).digest("hex");
+
+const getIdempotencyKey = (req) => {
+  const key = req.headers["x-idempotency-key"];
+  if (typeof key !== "string") {
+    return "";
+  }
+  return key.trim().slice(0, 128);
+};
+
+const isIdempotencyConflictError = (err) => {
+  if (!err) {
+    return false;
+  }
+  const code = String(err.code || "");
+  if (code === "23505" || code === "SQLITE_CONSTRAINT") {
+    return true;
+  }
+  const message = String(err.message || "").toLowerCase();
+  return message.includes("unique") || message.includes("constraint");
+};
+
+const withIdempotency = (req, res, endpoint, handler) => {
+  const requestKey = getIdempotencyKey(req);
+  if (!requestKey) {
+    handler();
+    return;
+  }
+
+  db.get(
+    "SELECT response_status, response_body FROM idempotency_keys WHERE user_id = ? AND endpoint = ? AND request_key = ?",
+    [req.user.id, endpoint, requestKey],
+    (lookupErr, cached) => {
+      if (lookupErr) {
+        return res.status(500).json({ message: "Erro ao validar idempotência." });
+      }
+      if (cached) {
+        let payload = {};
+        try {
+          payload = JSON.parse(cached.response_body);
+        } catch {
+          payload = { message: "Resposta em cache indisponível." };
+        }
+        return res.status(Number(cached.response_status) || 200).json(payload);
+      }
+
+      return handler((status, payload, done) => {
+        db.run(
+          "INSERT INTO idempotency_keys (user_id, endpoint, request_key, response_status, response_body) VALUES (?, ?, ?, ?, ?)",
+          [req.user.id, endpoint, requestKey, status, JSON.stringify(payload)],
+          (storeErr) => {
+            if (storeErr) {
+              if (!isIdempotencyConflictError(storeErr)) {
+                done(storeErr);
+                return;
+              }
+              db.get(
+                "SELECT response_status, response_body FROM idempotency_keys WHERE user_id = ? AND endpoint = ? AND request_key = ?",
+                [req.user.id, endpoint, requestKey],
+                (retryLookupErr, retryCached) => {
+                  if (retryLookupErr || !retryCached) {
+                    done(storeErr);
+                    return;
+                  }
+                  let retryPayload = {};
+                  try {
+                    retryPayload = JSON.parse(retryCached.response_body);
+                  } catch {
+                    retryPayload = { message: "Resposta em cache indisponível." };
+                  }
+                  done(null, {
+                    status: Number(retryCached.response_status) || 200,
+                    payload: retryPayload,
+                  });
+                }
+              );
+              return;
+            }
+            done(null);
+          }
+        );
+      });
+    }
+  );
+};
 
 const runWithTransaction = (work, callback) => {
   db.withTransaction((tx, finish) => {
@@ -1126,7 +1216,7 @@ app.post(
   requireSupervisor,
   [
     body("product_id").isInt({ min: 1 }).withMessage("Produto inválido."),
-    body("quantity").isInt({ min: 1 }).withMessage("Quantidade inválida."),
+    body("quantity").isFloat({ gt: 0 }).withMessage("Quantidade inválida."),
     body("reason").trim().notEmpty().withMessage("Motivo é obrigatório."),
   ],
   (req, res) => {
@@ -1153,7 +1243,7 @@ app.post(
         const proceed = (approval) => {
           let createdId = null;
           runWithTransaction((tx, finish) => {
-            const nextStock = product.current_stock - quantity;
+            const nextStock = Number(product.current_stock) - parsedQuantity;
             tx.run(
               "UPDATE products SET current_stock = ? WHERE id = ?",
               [nextStock, product_id],
@@ -1929,7 +2019,7 @@ app.post(
   authenticateToken,
   [
     body("product_id").isInt({ min: 1 }).withMessage("Produto inválido."),
-    body("quantity").isInt({ min: 1 }).withMessage("Quantidade inválida."),
+    body("quantity").isFloat({ gt: 0 }).withMessage("Quantidade inválida."),
     body("payment_method").trim().notEmpty().withMessage("Pagamento é obrigatório."),
     body("discount_id").optional().isInt({ min: 1 }).withMessage("Desconto inválido."),
   ],
@@ -1940,10 +2030,12 @@ app.post(
     }
 
     const { product_id, quantity, payment_method, discount_id = null } = req.body;
+    const parsedQuantity = Number(quantity);
     let responsePayload = null;
     let responseStatus = 201;
 
-    runWithTransaction((tx, finish) => {
+    withIdempotency(req, res, "/api/sales", (persistIdempotentResponse) => {
+      runWithTransaction((tx, finish) => {
       tx.get("SELECT * FROM products WHERE id = ?", [product_id], (err, product) => {
         if (err) {
           finish(err);
@@ -1953,14 +2045,14 @@ app.post(
           finish({ status: 404, message: "Produto não encontrado." });
           return;
         }
-        if (product.current_stock < quantity) {
+        if (Number(product.current_stock) < parsedQuantity) {
           finish({ status: 400, message: "Estoque insuficiente." });
           return;
         }
 
-        const total = Number(product.price) * Number(quantity);
+        const total = Number(product.price) * parsedQuantity;
         const applySale = (discount, discountAmount) => {
-          const nextStock = product.current_stock - quantity;
+          const nextStock = Number(product.current_stock) - parsedQuantity;
           const finalTotal = Math.max(total - discountAmount, 0);
 
           tx.run(
@@ -1977,7 +2069,7 @@ app.post(
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
                 [
                   product_id,
-                  quantity,
+                  parsedQuantity,
                   total,
                   discount?.id || null,
                   discountAmount,
@@ -1992,7 +2084,7 @@ app.post(
                   }
                   tx.run(
                     "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
-                    [product_id, "sale", -Number(quantity), "Venda PDV", req.user.id],
+                    [product_id, "sale", -parsedQuantity, "Venda PDV", req.user.id],
                     (movementErr) => {
                       if (movementErr) {
                         finish(movementErr);
@@ -2036,22 +2128,22 @@ app.post(
           } else if (discount.type === "buy_x_get_y") {
             const buyQty = Number(discount.buy_quantity);
             const getQty = Number(discount.get_quantity);
-            if (buyQty > 0 && quantity >= buyQty) {
+            if (buyQty > 0 && parsedQuantity >= buyQty) {
               discountAmount = Number(product.price) * getQty;
             }
           } else if (discount.type === "fixed_bundle") {
             const bundleQty = Number(discount.buy_quantity);
             const bundlePrice = Number(discount.value);
             if (bundleQty > 0 && bundlePrice >= 0) {
-              const bundles = Math.floor(quantity / bundleQty);
-              const remainder = quantity % bundleQty;
+              const bundles = Math.floor(parsedQuantity / bundleQty);
+              const remainder = parsedQuantity % bundleQty;
               const bundleTotal = bundles * bundlePrice;
               const remainderTotal = remainder * Number(product.price);
               discountAmount = total - (bundleTotal + remainderTotal);
             }
           }
 
-          if (discount.min_quantity && quantity < Number(discount.min_quantity)) {
+          if (discount.min_quantity && parsedQuantity < Number(discount.min_quantity)) {
             discountAmount = 0;
           }
 
@@ -2070,14 +2162,28 @@ app.post(
           });
         });
       });
-    }, (transactionErr) => {
-      if (transactionErr) {
-        if (transactionErr.status) {
-          return res.status(transactionErr.status).json({ message: transactionErr.message });
+      }, (transactionErr) => {
+        if (transactionErr) {
+          if (transactionErr.status) {
+            return res.status(transactionErr.status).json({ message: transactionErr.message });
+          }
+          return res.status(500).json({ message: "Erro ao registrar venda." });
         }
-        return res.status(500).json({ message: "Erro ao registrar venda." });
-      }
-      return res.status(responseStatus).json(responsePayload);
+
+        if (typeof persistIdempotentResponse !== "function") {
+          return res.status(responseStatus).json(responsePayload);
+        }
+
+        return persistIdempotentResponse(responseStatus, responsePayload, (idempotencyErr, cachedResponse) => {
+          if (idempotencyErr) {
+            return res.status(500).json({ message: "Erro ao registrar venda." });
+          }
+          if (cachedResponse) {
+            return res.status(cachedResponse.status).json(cachedResponse.payload);
+          }
+          return res.status(responseStatus).json(responsePayload);
+        });
+      });
     });
   }
 );
