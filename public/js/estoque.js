@@ -56,6 +56,8 @@ const supplierNameInput = document.getElementById("supplier-name");
 const supplierContactInput = document.getElementById("supplier-contact");
 const supplierPhoneInput = document.getElementById("supplier-phone");
 const supplierEmailInput = document.getElementById("supplier-email");
+const stockFeedback = document.getElementById("estoque-feedback");
+const ui = window.GreenStoreUI || null;
 
 let currentPage = 1;
 let stockRows = [];
@@ -64,6 +66,14 @@ let productLookup = new Map();
 let suppliersCache = [];
 
 const getToken = () => localStorage.getItem("greenstore_token");
+
+const setStockFeedback = (message, type = "secondary") => {
+  ui?.setFeedback(stockFeedback, { message, type, prefixClass: "mb-4" });
+};
+
+const clearStockFeedback = () => {
+  ui?.setFeedback(stockFeedback, { hidden: true });
+};
 
 const postJson = async (url, payload) => {
   const token = getToken();
@@ -855,17 +865,17 @@ restockList?.addEventListener("click", (event) => {
   const productId = Number(button.dataset.productId || 0);
   const quantity = Number(button.dataset.quantity || 0);
   if (!productId || !quantity) {
-    window.alert("Quantidade sugerida inválida.");
+    setStockFeedback("Quantidade sugerida inválida.", "warning");
     return;
   }
   postJson("/api/purchase-orders", {
     items: [{ product_id: productId, quantity }],
   })
     .then(() => {
-      window.alert("Pedido gerado com sucesso.");
+      setStockFeedback("Pedido gerado com sucesso.", "success");
     })
     .catch((error) => {
-      window.alert(error.message || "Erro ao gerar pedido.");
+      setStockFeedback(error.message || "Erro ao gerar pedido.", "danger");
     });
 });
 
@@ -880,26 +890,35 @@ purchaseOrdersBody?.addEventListener("click", (event) => {
   }
   postJson(`/api/purchase-orders/${orderId}/receive`, {})
     .then(() => {
-      window.alert("Pedido recebido.");
+      setStockFeedback("Pedido recebido.", "success");
       loadProducts();
     })
     .catch((error) => {
-      window.alert(error.message || "Erro ao receber pedido.");
+      setStockFeedback(error.message || "Erro ao receber pedido.", "danger");
     });
 });
 
 stockAdjustForm?.addEventListener("submit", (event) => {
   event.preventDefault();
+  clearStockFeedback();
   const adjustValue = stockAdjustValue?.value.trim();
   const adjustReason = stockAdjustReason?.value.trim();
   const productName = stockAdjustProduct?.value.trim();
   const productId = Number(stockAdjustId?.value || 0);
+  const submitButton = stockAdjustForm.querySelector('button[type="submit"]');
+  ui?.setButtonLoading(submitButton, {
+    isLoading: true,
+    idleText: "Salvar ajuste",
+    loadingText: "Salvando...",
+  });
   if (!adjustValue || !adjustReason || !productName) {
+    ui?.setButtonLoading(submitButton, { isLoading: false, idleText: "Salvar ajuste" });
     return;
   }
   const delta = Number(adjustValue.replace(",", "."));
   if (Number.isNaN(delta) || delta === 0) {
-    window.alert("Informe um ajuste válido.");
+    setStockFeedback("Informe um ajuste válido.", "warning");
+    ui?.setButtonLoading(submitButton, { isLoading: false, idleText: "Salvar ajuste" });
     return;
   }
   const adjustPromise = productId
@@ -930,15 +949,20 @@ stockAdjustForm?.addEventListener("submit", (event) => {
       stockAdjustValue.value = "";
       stockAdjustReason.value = "";
       stockAdjustModal?.hide();
+      setStockFeedback("Ajuste de estoque aplicado.", "success");
       loadProducts();
     })
     .catch((error) => {
-      window.alert(error.message || "Não foi possível ajustar o estoque.");
+      setStockFeedback(error.message || "Não foi possível ajustar o estoque.", "danger");
+    })
+    .finally(() => {
+      ui?.setButtonLoading(submitButton, { isLoading: false, idleText: "Salvar ajuste" });
     });
 });
 
 productForm?.addEventListener("submit", (event) => {
   event.preventDefault();
+  clearStockFeedback();
   if (!validateProductForm()) {
     return;
   }
@@ -973,6 +997,12 @@ productForm?.addEventListener("submit", (event) => {
   if (productSupplierSelect?.value) {
     payload.supplier_id = Number(productSupplierSelect.value);
   }
+  const submitButton = productForm.querySelector('button[type="submit"]');
+  ui?.setButtonLoading(submitButton, {
+    isLoading: true,
+    idleText: "Salvar produto",
+    loadingText: "Salvando...",
+  });
   ensureCategory(categoryName)
     .then((categoryId) =>
       postJson("/api/products", {
@@ -984,20 +1014,32 @@ productForm?.addEventListener("submit", (event) => {
       showFormError("");
       productForm?.reset();
       loadProducts();
-      window.alert("Produto cadastrado com sucesso.");
+      setStockFeedback("Produto cadastrado com sucesso.", "success");
     })
     .catch((error) => {
       showFormError(error.message || "Erro ao cadastrar produto.");
+      setStockFeedback(error.message || "Erro ao cadastrar produto.", "danger");
+    })
+    .finally(() => {
+      ui?.setButtonLoading(submitButton, { isLoading: false, idleText: "Salvar produto" });
     });
 });
 
 stockMoveForm?.addEventListener("submit", (event) => {
   event.preventDefault();
+  clearStockFeedback();
   const productName = stockMoveProduct?.value.trim();
   const quantityValue = Number(stockMoveQuantity?.value || 0);
   const moveType = stockMoveType?.value || "Entrada";
+  const submitButton = stockMoveForm.querySelector('button[type="submit"]');
+  ui?.setButtonLoading(submitButton, {
+    isLoading: true,
+    idleText: "Registrar",
+    loadingText: "Registrando...",
+  });
   if (!productName || !quantityValue || quantityValue <= 0) {
-    window.alert("Informe produto e quantidade.");
+    setStockFeedback("Informe produto e quantidade.", "warning");
+    ui?.setButtonLoading(submitButton, { isLoading: false, idleText: "Registrar" });
     return;
   }
   resolveProductByName(productName)
@@ -1005,7 +1047,7 @@ stockMoveForm?.addEventListener("submit", (event) => {
       if (moveType === "Perda/estrago") {
         const reason = lossReasonInput?.value.trim();
         if (!reason) {
-          window.alert("Informe o motivo da perda.");
+          setStockFeedback("Informe o motivo da perda.", "warning");
           return Promise.reject(new Error("Motivo é obrigatório."));
         }
         return postJsonWithHeaders("/api/stock/loss", {
@@ -1046,21 +1088,32 @@ stockMoveForm?.addEventListener("submit", (event) => {
     .then(() => {
       stockMoveForm?.reset();
       updateLossReasonVisibility();
-      window.alert("Movimentação registrada.");
+      setStockFeedback("Movimentação registrada.", "success");
       loadProducts();
     })
     .catch((error) => {
       if (error.message !== "Motivo é obrigatório.") {
-        window.alert(error.message || "Erro ao registrar movimentação.");
+        setStockFeedback(error.message || "Erro ao registrar movimentação.", "danger");
       }
+    })
+    .finally(() => {
+      ui?.setButtonLoading(submitButton, { isLoading: false, idleText: "Registrar" });
     });
 });
 
 supplierForm?.addEventListener("submit", (event) => {
   event.preventDefault();
+  clearStockFeedback();
   const name = supplierNameInput?.value.trim();
+  const submitButton = supplierForm.querySelector('button[type="submit"]');
+  ui?.setButtonLoading(submitButton, {
+    isLoading: true,
+    idleText: "Salvar fornecedor",
+    loadingText: "Salvando...",
+  });
   if (!name) {
-    window.alert("Informe o nome do fornecedor.");
+    setStockFeedback("Informe o nome do fornecedor.", "warning");
+    ui?.setButtonLoading(submitButton, { isLoading: false, idleText: "Salvar fornecedor" });
     return;
   }
   postJson("/api/suppliers", {
@@ -1076,10 +1129,13 @@ supplierForm?.addEventListener("submit", (event) => {
     .then((suppliers) => {
       suppliersCache = suppliers;
       renderSuppliers();
-      window.alert("Fornecedor cadastrado.");
+      setStockFeedback("Fornecedor cadastrado.", "success");
     })
     .catch((error) => {
-      window.alert(error.message || "Erro ao cadastrar fornecedor.");
+      setStockFeedback(error.message || "Erro ao cadastrar fornecedor.", "danger");
+    })
+    .finally(() => {
+      ui?.setButtonLoading(submitButton, { isLoading: false, idleText: "Salvar fornecedor" });
     });
 });
 
