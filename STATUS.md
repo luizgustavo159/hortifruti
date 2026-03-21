@@ -151,3 +151,4 @@
 - Smoke test de páginas frontend adicionado (home, caixa, estoque, descontos e admin/perfil).
 - Acessibilidade inicial: `aria-live`/`role` em feedbacks críticos do front.
 - Testes de contrato iniciais adicionados para autenticação e validações da API de vendas.
+- Cobertura de contrato ampliada com cenários RBAC (acesso negado para operador e permitido para admin em rotas administrativas).

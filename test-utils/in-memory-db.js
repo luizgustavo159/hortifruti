@@ -101,6 +101,25 @@ const execute = (sql, params = []) => {
     return { rows: row ? [clone(row)] : [] };
   }
 
+  if (
+    normalized.startsWith(
+      "select id, name, email, phone, role, is_active, permissions, created_at from users"
+    )
+  ) {
+    return {
+      rows: state.users.map((user) => ({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone || null,
+        role: user.role,
+        is_active: user.is_active,
+        permissions: user.permissions || "[]",
+        created_at: user.created_at || new Date().toISOString(),
+      })),
+    };
+  }
+
   if (normalized.startsWith("insert into sessions")) {
     const [userId, token] = params;
     const row = { id: nextId("sessions"), user_id: userId, token, revoked_at: null };

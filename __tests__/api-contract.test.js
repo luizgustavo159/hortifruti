@@ -124,4 +124,29 @@ describe("api contracts", () => {
     expect(response.status).toBe(401);
     expect(response.body.message).toBe("Token não informado.");
   });
+
+  it("enforces role contract for admin-only endpoint", async () => {
+    const { email, password } = await createUser({ email: "operator2@example.com", role: "operator" });
+    const loginResponse = await request(app).post("/api/auth/login").send({ email, password });
+
+    const response = await request(app)
+      .get("/api/users")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(response.status).toBe(403);
+    expect(response.body.message).toBe("Acesso não autorizado.");
+  });
+
+  it("allows admin access contract to users listing", async () => {
+    const { email, password } = await createUser({ email: "admin@example.com", role: "admin" });
+    const loginResponse = await request(app).post("/api/auth/login").send({ email, password });
+
+    const response = await request(app)
+      .get("/api/users")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(response.status).toBe(200);
+    expect(Array.isArray(response.body)).toBe(true);
+    expect(response.body[0].email).toBe("admin@example.com");
+  });
 });
