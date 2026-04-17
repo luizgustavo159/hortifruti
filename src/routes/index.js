@@ -777,17 +777,18 @@ router.post(
     return getSettings(["max_stock_adjust"], (settings) => {
       const maxStockAdjust = Number(settings.max_stock_adjust || 0);
       if (maxStockAdjust > 0 && Math.abs(Number(delta)) > maxStockAdjust) {
-        return verifyApprovalToken(req.headers["x-approval-token"], "stock_adjust", (error) => {
+        return verifyApprovalToken(req.headers["x-approval-token"], "stock_adjust", (error, approval) => {
           if (error) {
             return res.status(error.status).json({ message: error.message });
           }
-          return saveAdjustment();
+          return saveAdjustment(approval);
         });
       }
       return saveAdjustment();
     });
 
-    function saveAdjustment() {
+    function saveAdjustment(approval) {
+      let updatedStock = null;
       runWithTransaction((tx, finish) => {
         tx.get("SELECT * FROM products WHERE id = ?", [product_id], (err, product) => {
           if (err) {
@@ -800,6 +801,7 @@ router.post(
           }
 
           const nextStock = product.current_stock + Number(delta);
+          updatedStock = nextStock;
           if (nextStock < 0) {
             finish({ status: 400, message: "Estoque não pode ficar negativo." });
             return;
@@ -838,8 +840,9 @@ router.post(
           action: "stock_adjust",
           details: { product_id, delta, reason },
           performedBy: req.user.id,
+          approvedBy: approval?.approved_by || null,
         });
-        return res.status(201).json({ status: "ok" });
+        return res.status(201).json({ status: "ok", current_stock: updatedStock });
       });
     }
   }
