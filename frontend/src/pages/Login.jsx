@@ -1,4 +1,33 @@
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { apiFetch } from "../lib/api";
+import { setToken } from "../lib/auth";
+
 export function Login() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const navigate = useNavigate();
+
+  const onSubmit = async (event) => {
+    event.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const response = await apiFetch("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      setToken(response.token);
+      navigate("/caixa");
+    } catch (submitError) {
+      setError(submitError.message || "Falha ao autenticar.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="login-page">
       <section className="login-hero">
@@ -16,18 +45,31 @@ export function Login() {
         </div>
       </section>
       <section className="login-card">
-        <form className="form">
+        <form className="form" onSubmit={onSubmit}>
           <h2>Entrar</h2>
           <label>
             Email
-            <input type="email" placeholder="nome@empresa.com" />
+            <input
+              type="email"
+              placeholder="nome@empresa.com"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+            />
           </label>
           <label>
             Senha
-            <input type="password" placeholder="••••••••" />
+            <input
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+            />
           </label>
-          <button className="button" type="button">
-            Acessar painel
+          {error ? <p style={{ color: "#c62828", margin: 0 }}>{error}</p> : null}
+          <button className="button" type="submit" disabled={loading}>
+            {loading ? "Entrando..." : "Acessar painel"}
           </button>
           <span className="badge">Suporte 24/7</span>
         </form>
