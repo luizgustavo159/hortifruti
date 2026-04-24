@@ -47,7 +47,10 @@ export async function apiFetch(path, options = {}) {
       clearUser();
     }
     const message = data?.message || "Erro na requisição.";
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    error.data = data;
+    throw error;
   }
 
   return data;

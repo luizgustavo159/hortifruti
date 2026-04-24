@@ -81,6 +81,20 @@ describe("apiFetch", () => {
     await expect(apiFetch("/auth/login", { method: "POST" })).rejects.toThrow("Credenciais inválidas.");
   });
 
+
+  it("exposes response status in thrown errors", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: async () => JSON.stringify({ message: "Sem permissão." }),
+    });
+
+    await expect(apiFetch("/admin")).rejects.toMatchObject({
+      message: "Sem permissão.",
+      status: 403,
+    });
+  });
+
   it("clears local session on 401", async () => {
     setToken("jwt-token");
     setUser({ id: 1, role: "operator" });
