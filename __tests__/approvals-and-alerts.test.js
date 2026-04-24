@@ -1,6 +1,4 @@
 process.env.JWT_SECRET = "test-secret-test-secret-test-secret";
-process.env.DATABASE_URL =
-  process.env.DATABASE_URL || "postgres://greenstore:greenstore@localhost:5432/greenstore_test";
 process.env.NODE_ENV = "test";
 process.env.CORS_ORIGIN = "http://localhost";
 process.env.METRICS_ENABLED = "false";
@@ -56,6 +54,7 @@ const resetDatabase = () =>
       DELETE FROM login_attempts;
       DELETE FROM request_metrics;
       DELETE FROM alerts;
+      DELETE FROM audit_logs;
       DELETE FROM settings;
       DELETE FROM products;
       DELETE FROM categories;
@@ -141,9 +140,9 @@ describe("approvals and alerts flows", () => {
       .post("/api/stock/adjust")
       .set("Authorization", `Bearer ${supervisorToken}`)
       .set("x-approval-token", approvalToken)
-      .send({ product_id: productId, delta: 2, reason: "Inventário" });
+      .send({ product_id: productId, delta: 6, reason: "Inventário" });
 
-    expect(adjustResponse.status).toBe(200);
+    expect(adjustResponse.status).toBe(201);
     const audit = await get("SELECT approved_by FROM audit_logs WHERE action = ?", ["stock_adjust"]);
     expect(audit.approved_by).toBeTruthy();
   });
