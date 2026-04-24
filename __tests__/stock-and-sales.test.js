@@ -1,6 +1,4 @@
 process.env.JWT_SECRET = "test-secret-test-secret-test-secret";
-process.env.DATABASE_URL =
-  process.env.DATABASE_URL || "postgres://greenstore:greenstore@localhost:5432/greenstore_test";
 process.env.NODE_ENV = "test";
 process.env.CORS_ORIGIN = "http://localhost";
 process.env.METRICS_ENABLED = "false";
@@ -56,6 +54,7 @@ const resetDatabase = () =>
       DELETE FROM login_attempts;
       DELETE FROM request_metrics;
       DELETE FROM alerts;
+      DELETE FROM audit_logs;
       DELETE FROM settings;
       DELETE FROM products;
       DELETE FROM categories;
@@ -120,7 +119,7 @@ describe("stock and sales flows", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ product_id: productId, delta: 5, reason: "Inventário" });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(201);
     expect(response.body.current_stock).toBe(15);
 
     const product = await get("SELECT current_stock FROM products WHERE id = ?", [productId]);
