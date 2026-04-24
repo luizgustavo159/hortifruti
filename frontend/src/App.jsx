@@ -8,11 +8,14 @@ import { AdminLogs } from "./pages/AdminLogs";
 import { AdminPerfil } from "./pages/AdminPerfil";
 import { AdminPoliticas } from "./pages/AdminPoliticas";
 import { AdminRelatorios } from "./pages/AdminRelatorios";
-import { isAuthenticated } from "./lib/auth";
+import { hasRequiredRole, isAuthenticated } from "./lib/auth";
 
-function ProtectedRoute({ children }) {
+function ProtectedRoute({ children, requiredRole }) {
   if (!isAuthenticated()) {
     return <Navigate to="/" replace />;
+  }
+  if (!hasRequiredRole(requiredRole)) {
+    return <Navigate to="/caixa" replace />;
   }
   return children;
 }
@@ -21,7 +24,10 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Login />} />
+        <Route
+          path="/"
+          element={isAuthenticated() ? <Navigate to="/caixa" replace /> : <Login />}
+        />
         <Route
           path="/caixa"
           element={
@@ -41,7 +47,7 @@ export default function App() {
         <Route
           path="/descontos"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredRole="manager">
               <Descontos />
             </ProtectedRoute>
           }
@@ -49,7 +55,7 @@ export default function App() {
         <Route
           path="/admin"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredRole="admin">
               <AdminDashboard />
             </ProtectedRoute>
           }
@@ -57,7 +63,7 @@ export default function App() {
         <Route
           path="/admin/logs"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredRole="admin">
               <AdminLogs />
             </ProtectedRoute>
           }
@@ -65,7 +71,7 @@ export default function App() {
         <Route
           path="/admin/perfil"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredRole="admin">
               <AdminPerfil />
             </ProtectedRoute>
           }
@@ -73,7 +79,7 @@ export default function App() {
         <Route
           path="/admin/politicas"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredRole="admin">
               <AdminPoliticas />
             </ProtectedRoute>
           }
@@ -81,7 +87,7 @@ export default function App() {
         <Route
           path="/admin/relatorios"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredRole="admin">
               <AdminRelatorios />
             </ProtectedRoute>
           }
