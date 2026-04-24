@@ -10,6 +10,10 @@ const roleLevels = {
 export const getToken = () => localStorage.getItem(TOKEN_KEY);
 
 export const setToken = (token) => {
+  if (!token) {
+    clearToken();
+    return;
+  }
   localStorage.setItem(TOKEN_KEY, token);
 };
 

@@ -33,6 +33,14 @@ describe("auth helpers", () => {
     expect(getToken()).toBeNull();
   });
 
+
+  it("clears token when setToken receives empty value", () => {
+    setToken("abc");
+    setToken("");
+
+    expect(getToken()).toBeNull();
+  });
+
   it("stores and clears current user", () => {
     setUser({ id: 1, role: "admin" });
     expect(getUser()).toMatchObject({ id: 1, role: "admin" });
