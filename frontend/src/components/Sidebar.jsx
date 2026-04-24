@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import { clearToken, getAuthUser, hasRequiredRole } from "../lib/auth";
+import { clearToken, clearUser, getAuthUser, hasRequiredRole } from "../lib/auth";
 
 const navItems = [
   { to: "/caixa", label: "Caixa" },
@@ -15,6 +15,7 @@ export function Sidebar() {
 
   const logout = () => {
     clearToken();
+    clearUser();
     navigate("/", { replace: true });
   };
 

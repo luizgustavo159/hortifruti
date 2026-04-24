@@ -4,10 +4,13 @@ import {
   decodeTokenPayload,
   getAuthUser,
   getToken,
+  getUser,
   hasRequiredRole,
   isAuthenticated,
   isTokenExpired,
+  setUser,
   setToken,
+  clearUser,
 } from "./auth";
 
 const toBase64Url = (obj) =>
@@ -28,6 +31,13 @@ describe("auth helpers", () => {
     expect(getToken()).toBe("abc");
     clearToken();
     expect(getToken()).toBeNull();
+  });
+
+  it("stores and clears current user", () => {
+    setUser({ id: 1, role: "admin" });
+    expect(getUser()).toMatchObject({ id: 1, role: "admin" });
+    clearUser();
+    expect(getUser()).toBeNull();
   });
 
   it("decodes payload and exposes user info", () => {

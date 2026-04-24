@@ -526,6 +526,27 @@ router.post(
   }
 );
 
+router.get("/api/auth/me", authenticateToken, (req, res) => {
+  db.get(
+    "SELECT id, name, email, role, is_active FROM users WHERE id = ?",
+    [req.user.id],
+    (err, user) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao carregar usuário." });
+      }
+      if (!user || !user.is_active) {
+        return res.status(404).json({ message: "Usuário não encontrado." });
+      }
+      return res.json({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      });
+    }
+  );
+});
+
 router.get("/api/categories", authenticateToken, (req, res) => {
   db.all("SELECT * FROM categories ORDER BY name", [], (err, rows) => {
     if (err) {

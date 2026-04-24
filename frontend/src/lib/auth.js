@@ -1,4 +1,5 @@
 const TOKEN_KEY = "greenstore_token";
+const USER_KEY = "greenstore_user";
 const roleLevels = {
   operator: 1,
   supervisor: 2,
@@ -14,6 +15,29 @@ export const setToken = (token) => {
 
 export const clearToken = () => {
   localStorage.removeItem(TOKEN_KEY);
+};
+
+export const getUser = () => {
+  const raw = localStorage.getItem(USER_KEY);
+  if (!raw) {
+    return null;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (_error) {
+    return null;
+  }
+};
+
+export const setUser = (user) => {
+  if (!user) {
+    return;
+  }
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+};
+
+export const clearUser = () => {
+  localStorage.removeItem(USER_KEY);
 };
 
 export const decodeTokenPayload = (token) => {
@@ -42,6 +66,10 @@ export const isTokenExpired = (token) => {
 };
 
 export const getAuthUser = () => {
+  const persistedUser = getUser();
+  if (persistedUser?.role) {
+    return persistedUser;
+  }
   const token = getToken();
   const payload = decodeTokenPayload(token);
   if (!payload) {
@@ -72,6 +100,7 @@ export const isAuthenticated = () => {
   }
   if (isTokenExpired(token)) {
     clearToken();
+    clearUser();
     return false;
   }
   return true;
