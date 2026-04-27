@@ -101,5 +101,12 @@ const limiter = rateLimit({
 
 app.use("/api", limiter);
 app.use(router);
+app.get("*", (req, res, next) => {
+  if (req.path.startsWith("/api")) {
+    next();
+    return;
+  }
+  res.sendFile(path.join(__dirname, "..", "public", "index.html"));
+});
 
 module.exports = { app, db };
