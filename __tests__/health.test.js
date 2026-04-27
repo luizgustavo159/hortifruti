@@ -1,6 +1,4 @@
 process.env.JWT_SECRET = "test-secret-test-secret-test-secret";
-process.env.DATABASE_URL =
-  process.env.DATABASE_URL || "postgres://greenstore:greenstore@localhost:5432/greenstore_test";
 process.env.NODE_ENV = "test";
 process.env.CORS_ORIGIN = "http://localhost";
 process.env.METRICS_ENABLED = "false";

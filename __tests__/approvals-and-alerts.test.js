@@ -1,6 +1,4 @@
 process.env.JWT_SECRET = "test-secret-test-secret-test-secret";
-process.env.DATABASE_URL =
-  process.env.DATABASE_URL || "postgres://greenstore:greenstore@localhost:5432/greenstore_test";
 process.env.NODE_ENV = "test";
 process.env.CORS_ORIGIN = "http://localhost";
 process.env.METRICS_ENABLED = "false";
@@ -56,6 +54,7 @@ const resetDatabase = () =>
       DELETE FROM login_attempts;
       DELETE FROM request_metrics;
       DELETE FROM alerts;
+      DELETE FROM audit_logs;
       DELETE FROM settings;
       DELETE FROM products;
       DELETE FROM categories;
@@ -117,7 +116,10 @@ describe("approvals and alerts flows", () => {
       email: "supervisor@example.com",
     });
     const managerPassword = "senha1234";
-    await createUserWithSession({ role: "manager", email: "manager@example.com" });
+    const { userId: managerId } = await createUserWithSession({
+      role: "manager",
+      email: "manager@example.com",
+    });
     await run(
       "UPDATE users SET password_hash = ? WHERE email = ?",
       [bcrypt.hashSync(managerPassword, 10), "manager@example.com"]
@@ -141,11 +143,28 @@ describe("approvals and alerts flows", () => {
       .post("/api/stock/adjust")
       .set("Authorization", `Bearer ${supervisorToken}`)
       .set("x-approval-token", approvalToken)
-      .send({ product_id: productId, delta: 2, reason: "Inventário" });
+      .send({ product_id: productId, delta: 6, reason: "Inventário" });
 
-    expect(adjustResponse.status).toBe(200);
+    expect(adjustResponse.status).toBe(201);
     const audit = await get("SELECT approved_by FROM audit_logs WHERE action = ?", ["stock_adjust"]);
-    expect(audit.approved_by).toBeTruthy();
+    expect(audit.approved_by).toBe(managerId);
+  });
+
+  it("blocks large stock adjustment without approval token", async () => {
+    const { token: supervisorToken } = await createUserWithSession({
+      role: "supervisor",
+      email: "supervisor-no-approval@example.com",
+    });
+    const { productId } = await createProduct({ stock: 10, price: 10 });
+    await run("INSERT INTO settings (key, value) VALUES (?, ?)", ["max_stock_adjust", "5"]);
+
+    const adjustResponse = await request(app)
+      .post("/api/stock/adjust")
+      .set("Authorization", `Bearer ${supervisorToken}`)
+      .send({ product_id: productId, delta: 6, reason: "Inventário" });
+
+    expect(adjustResponse.status).toBe(401);
+    expect(adjustResponse.body.message).toBe("Aprovação necessária.");
   });
 
   it("lists recent alerts for admins", async () => {
