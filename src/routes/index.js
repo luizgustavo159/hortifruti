@@ -1769,7 +1769,7 @@ router.post(
   requireApproval("cancel_sale"),
   [
     body("reason").trim().notEmpty().withMessage("Motivo é obrigatório."),
-    body("items").isInt({ min: 0 }).withMessage("Itens inválidos."),
+    body("sale_id").isInt({ min: 1 }).withMessage("Venda inválida."),
   ],
   (req, res) => {
     const errors = validationResult(req);
@@ -1777,14 +1777,74 @@ router.post(
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { reason, items } = req.body;
-    logAudit({
-      action: "cancel_sale",
-      details: { reason, items },
-      performedBy: req.user.id,
-      approvedBy: req.approval?.approved_by,
+    const { reason, sale_id } = req.body;
+    runWithTransaction((tx, finish) => {
+      tx.get("SELECT * FROM sales WHERE id = ?", [sale_id], (saleErr, sale) => {
+        if (saleErr) {
+          finish(saleErr);
+          return;
+        }
+        if (!sale) {
+          finish({ status: 404, message: "Venda não encontrada." });
+          return;
+        }
+        if (sale.cancelled_at) {
+          finish({ status: 409, message: "Venda já cancelada." });
+          return;
+        }
+
+        tx.run(
+          "UPDATE products SET current_stock = current_stock + ? WHERE id = ?",
+          [sale.quantity, sale.product_id],
+          (stockErr) => {
+            if (stockErr) {
+              finish(stockErr);
+              return;
+            }
+
+            tx.run(
+              `UPDATE sales
+               SET cancelled_at = CURRENT_TIMESTAMP,
+                   cancel_reason = ?,
+                   cancelled_by = ?
+               WHERE id = ?`,
+              [reason, req.user.id, sale_id],
+              (updateErr) => {
+                if (updateErr) {
+                  finish(updateErr);
+                  return;
+                }
+                tx.run(
+                  "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
+                  [sale.product_id, "cancellation", Number(sale.quantity), `Cancelamento venda #${sale_id}: ${reason}`, req.user.id],
+                  (movementErr) => {
+                    if (movementErr) {
+                      finish(movementErr);
+                      return;
+                    }
+                    finish(null);
+                  }
+                );
+              }
+            );
+          }
+        );
+      });
+    }, (transactionErr) => {
+      if (transactionErr) {
+        if (transactionErr.status) {
+          return res.status(transactionErr.status).json({ message: transactionErr.message });
+        }
+        return res.status(500).json({ message: "Erro ao cancelar venda." });
+      }
+      logAudit({
+        action: "cancel_sale",
+        details: { reason, sale_id },
+        performedBy: req.user.id,
+        approvedBy: req.approval?.approved_by,
+      });
+      return res.json({ status: "ok" });
     });
-    return res.json({ status: "ok" });
   }
 );
 

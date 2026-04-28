@@ -101,12 +101,19 @@ const limiter = rateLimit({
 
 app.use("/api", limiter);
 app.use(router);
+app.use("/api", (req, res) => {
+  res.status(404).json({ message: "Rota de API não encontrada." });
+});
 app.get("*", (req, res, next) => {
   if (req.path.startsWith("/api")) {
     next();
     return;
   }
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
+});
+app.use((err, _req, res, _next) => {
+  logger.error({ err }, "Erro não tratado.");
+  res.status(500).json({ message: "Erro interno do servidor." });
 });
 
 module.exports = { app, db };
