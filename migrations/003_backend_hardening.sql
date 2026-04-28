@@ -1,0 +1,11 @@
+ALTER TABLE stock_losses
+  ADD COLUMN IF NOT EXISTS reported_by INTEGER REFERENCES users(id);
+
+ALTER TABLE sales
+  ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+
+ALTER TABLE sales
+  ADD COLUMN IF NOT EXISTS cancel_reason TEXT;
+
+ALTER TABLE sales
+  ADD COLUMN IF NOT EXISTS cancelled_by INTEGER REFERENCES users(id);
