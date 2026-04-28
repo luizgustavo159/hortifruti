@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS finance_transactions (
+  id SERIAL PRIMARY KEY,
+  type TEXT NOT NULL,
+  category TEXT NOT NULL,
+  amount NUMERIC(12,2) NOT NULL,
+  reference TEXT,
+  notes TEXT,
+  recorded_by INTEGER NOT NULL,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(recorded_by) REFERENCES users(id)
+);

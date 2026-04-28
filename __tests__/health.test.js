@@ -29,4 +29,10 @@ describe("health endpoint", () => {
     expect(response.status).toBe(200);
     expect(response.body.status).toBe("ok");
   });
+
+  it("returns JSON for unknown API routes", async () => {
+    const response = await request(app).get("/api/nao-existe");
+    expect(response.status).toBe(404);
+    expect(response.body.message).toBe("Rota de API não encontrada.");
+  });
 });

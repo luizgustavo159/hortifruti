@@ -1,0 +1,5 @@
+ALTER TABLE sales
+  ADD COLUMN IF NOT EXISTS document_number TEXT UNIQUE;
+
+ALTER TABLE sales
+  ADD COLUMN IF NOT EXISTS fiscal_status TEXT NOT NULL DEFAULT 'issued';
