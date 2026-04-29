@@ -27,19 +27,21 @@ const run = (sql, params = []) =>
     });
   });
 
-const createAdminSession = async () => {
-  const email = `ops-admin-${Date.now()}-${Math.floor(Math.random() * 10000)}@example.com`;
+const createSession = async (role = "admin") => {
+  const email = `ops-${role}-${Date.now()}-${Math.floor(Math.random() * 10000)}@example.com`;
   const passwordHash = bcrypt.hashSync("senha1234", 10);
   const userId = await run(
     "INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, ?, 1) RETURNING id",
-    ["Ops Admin", email, passwordHash, "admin"]
+    ["Ops User", email, passwordHash, role]
   );
-  const token = jwt.sign({ id: userId, name: "Ops Admin", email, role: "admin" }, process.env.JWT_SECRET, {
+  const token = jwt.sign({ id: userId, name: "Ops User", email, role }, process.env.JWT_SECRET, {
     expiresIn: "8h",
   });
   await run("INSERT INTO sessions (user_id, token) VALUES (?, ?)", [userId, token]);
   return token;
 };
+
+const createAdminSession = async () => createSession("admin");
 
 beforeAll((done) => {
   const sql = migrationFiles.map((file) => loadSql(file)).join("\n");
@@ -103,5 +105,13 @@ describe("health endpoint", () => {
       .set("Authorization", `Bearer ${token}`);
     expect(response.status).toBe(400);
     expect(response.body.message).toBe("Data inválida.");
+  });
+
+  it("returns 403 for snapshot request by non-admin user", async () => {
+    const token = await createSession("operator");
+    const response = await request(app)
+      .get("/api/admin/ops/snapshot?date=2026-04-01")
+      .set("Authorization", `Bearer ${token}`);
+    expect(response.status).toBe(403);
   });
 });
