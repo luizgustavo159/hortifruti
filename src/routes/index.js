@@ -75,6 +75,25 @@ const runWithTransaction = (work, callback) => {
   }, callback);
 };
 
+const buildDocumentNumber = (saleId) => {
+  const now = new Date();
+  const date = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, "0")}${String(
+    now.getUTCDate()
+  ).padStart(2, "0")}`;
+  return `PDV-${date}-${String(saleId).padStart(6, "0")}`;
+};
+
+const toCsvValue = (value) => {
+  if (value === null || typeof value === "undefined") {
+    return "";
+  }
+  const text = String(value);
+  if (text.includes(",") || text.includes('"') || text.includes("\n")) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+};
+
 const logAudit = ({ action, details, performedBy, approvedBy }) => {
   db.run(
     "INSERT INTO audit_logs (action, details, performed_by, approved_by) VALUES (?, ?, ?, ?)",
@@ -199,6 +218,119 @@ router.get("/api/metrics", authenticateToken, requireAdmin, (req, res) => {
         uptime_seconds: req.requestMetrics?.uptimeSeconds || 0,
         last_24h: row || { total: 0, errors: 0 },
       });
+    }
+  );
+});
+
+router.get("/api/admin/ops/health", authenticateToken, requireAdmin, (req, res) => {
+  const criticalTables = [
+    "users",
+    "products",
+    "sales",
+    "stock_movements",
+    "cash_sessions",
+    "cash_movements",
+    "finance_transactions",
+    "finance_accounts",
+    "audit_logs",
+  ];
+
+  const results = {};
+  const checkNext = (index) => {
+    if (index >= criticalTables.length) {
+      const missing = criticalTables.filter((table) => results[table] !== "ok");
+      return res.json({
+        status: missing.length ? "degraded" : "ok",
+        checked_at: new Date().toISOString(),
+        missing_tables: missing,
+        tables: results,
+      });
+    }
+    const table = criticalTables[index];
+    return db.get(`SELECT 1 FROM ${table} LIMIT 1`, [], (err) => {
+      results[table] = err ? "missing_or_invalid" : "ok";
+      return checkNext(index + 1);
+    });
+  };
+
+  return checkNext(0);
+});
+
+router.get("/api/admin/ops/snapshot", authenticateToken, requireAdmin, (req, res) => {
+  const date = req.query.date || new Date().toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ message: "Data inválida." });
+  }
+  const referenceDate = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(referenceDate.getTime())) {
+    return res.status(400).json({ message: "Data inválida." });
+  }
+  if (referenceDate.toISOString().slice(0, 10) !== date) {
+    return res.status(400).json({ message: "Data inválida." });
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  if (date > today) {
+    return res.status(400).json({ message: "Data futura não permitida." });
+  }
+  const next7Days = new Date(referenceDate.getTime() + 6 * 24 * 60 * 60 * 1000);
+  const next7DaysDate = next7Days.toISOString().slice(0, 10);
+  db.get(
+    "SELECT COUNT(*)::int AS low_stock_count FROM products WHERE current_stock <= min_stock",
+    [],
+    (lowErr, lowRow) => {
+      if (lowErr) {
+        return res.status(500).json({ message: "Erro ao gerar snapshot operacional." });
+      }
+      db.get(
+        `SELECT COUNT(*)::int AS expiring_7d_count
+         FROM products
+         WHERE expires_at IS NOT NULL
+           AND CAST(expires_at AS DATE) >= CAST(? AS DATE)
+           AND CAST(expires_at AS DATE) <= CAST(? AS DATE)`,
+        [date, next7DaysDate],
+        (expErr, expRow) => {
+          if (expErr) {
+            return res.status(500).json({ message: "Erro ao gerar snapshot operacional." });
+          }
+          db.get(
+            `SELECT COALESCE(SUM(final_total), 0) AS sales_total
+             FROM sales
+             WHERE CAST(created_at AS DATE) = CAST(? AS DATE) AND cancelled_at IS NULL`,
+            [date],
+            (salesErr, salesRow) => {
+              if (salesErr) {
+                return res.status(500).json({ message: "Erro ao gerar snapshot operacional." });
+              }
+              db.get(
+                "SELECT COUNT(*)::int AS open_cash_sessions FROM cash_sessions WHERE closed_at IS NULL",
+                [],
+                (cashErr, cashRow) => {
+                  if (cashErr) {
+                    return res.status(500).json({ message: "Erro ao gerar snapshot operacional." });
+                  }
+                  db.get(
+                    "SELECT COUNT(*)::int AS pending_accounts FROM finance_accounts WHERE status = 'pending'",
+                    [],
+                    (accErr, accRow) => {
+                      if (accErr) {
+                        return res.status(500).json({ message: "Erro ao gerar snapshot operacional." });
+                      }
+                      return res.json({
+                        date,
+                        low_stock_count: Number(lowRow?.low_stock_count || 0),
+                        expiring_7d_count: Number(expRow?.expiring_7d_count || 0),
+                        sales_total: Number(salesRow?.sales_total || 0),
+                        open_cash_sessions: Number(cashRow?.open_cash_sessions || 0),
+                        pending_accounts: Number(accRow?.pending_accounts || 0),
+                      });
+                    }
+                  );
+                }
+              );
+            }
+          );
+        }
+      );
     }
   );
 });
@@ -1349,10 +1481,17 @@ router.post(
   "/api/sales",
   authenticateToken,
   [
-    body("product_id").isInt({ min: 1 }).withMessage("Produto inválido."),
-    body("quantity").isInt({ min: 1 }).withMessage("Quantidade inválida."),
     body("payment_method").trim().notEmpty().withMessage("Pagamento é obrigatório."),
+    body("product_id").optional().isInt({ min: 1 }).withMessage("Produto inválido."),
+    body("quantity").optional().isInt({ min: 1 }).withMessage("Quantidade inválida."),
     body("discount_id").optional().isInt({ min: 1 }).withMessage("Desconto inválido."),
+    body("items")
+      .optional()
+      .isArray({ min: 1 })
+      .withMessage("Itens da venda inválidos."),
+    body("items.*.product_id").optional().isInt({ min: 1 }).withMessage("Produto inválido."),
+    body("items.*.quantity").optional().isInt({ min: 1 }).withMessage("Quantidade inválida."),
+    body("items.*.discount_id").optional({ nullable: true }).isInt({ min: 1 }).withMessage("Desconto inválido."),
   ],
   (req, res) => {
     const errors = validationResult(req);
@@ -1360,22 +1499,33 @@ router.post(
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { product_id, quantity, payment_method, discount_id = null } = req.body;
-    let responsePayload = null;
-    let responseStatus = 201;
+    const { payment_method } = req.body;
+    const itemsFromBody = Array.isArray(req.body.items)
+      ? req.body.items
+      : [{ product_id: req.body.product_id, quantity: req.body.quantity, discount_id: req.body.discount_id ?? null }];
 
-    runWithTransaction((tx, finish) => {
+    const hasInvalidItems = itemsFromBody.some((item) => !item?.product_id || !item?.quantity);
+    if (hasInvalidItems) {
+      return res.status(400).json({ message: "Todos os itens devem ter produto e quantidade válidos." });
+    }
+
+    let responsePayload = null;
+    const saleItems = [];
+
+    const processSaleItem = (tx, item, done) => {
+      const { product_id, quantity, discount_id = null } = item;
+
       tx.get("SELECT * FROM products WHERE id = ?", [product_id], (err, product) => {
         if (err) {
-          finish(err);
+          done(err);
           return;
         }
         if (!product) {
-          finish({ status: 404, message: "Produto não encontrado." });
+          done({ status: 404, message: "Produto não encontrado." });
           return;
         }
         if (product.current_stock < quantity) {
-          finish({ status: 400, message: "Estoque insuficiente." });
+          done({ status: 400, message: "Estoque insuficiente." });
           return;
         }
 
@@ -1389,7 +1539,7 @@ router.post(
             [nextStock, product_id],
             (updateErr) => {
               if (updateErr) {
-                finish(updateErr);
+                done(updateErr);
                 return;
               }
 
@@ -1408,24 +1558,38 @@ router.post(
                 ],
                 (saleErr, row) => {
                   if (saleErr) {
-                    finish(saleErr);
+                    done(saleErr);
                     return;
                   }
+                  const documentNumber = buildDocumentNumber(row.id);
                   tx.run(
-                    "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
-                    [product_id, "sale", -Number(quantity), "Venda PDV", req.user.id],
-                    (movementErr) => {
-                      if (movementErr) {
-                        finish(movementErr);
+                    "UPDATE sales SET document_number = ?, fiscal_status = COALESCE(fiscal_status, 'issued') WHERE id = ?",
+                    [documentNumber, row.id],
+                    (docErr) => {
+                      if (docErr) {
+                        done(docErr);
                         return;
                       }
-                      responsePayload = {
-                        id: row.id,
-                        total,
-                        discount_amount: discountAmount,
-                        final_total: finalTotal,
-                      };
-                      finish(null);
+                      tx.run(
+                        "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
+                        [product_id, "sale", -Number(quantity), "Venda PDV", req.user.id],
+                        (movementErr) => {
+                          if (movementErr) {
+                            done(movementErr);
+                            return;
+                          }
+                          saleItems.push({
+                            id: row.id,
+                            document_number: documentNumber,
+                            product_id,
+                            quantity: Number(quantity),
+                            total,
+                            discount_amount: discountAmount,
+                            final_total: finalTotal,
+                          });
+                          done(null);
+                        }
+                      );
                     }
                   );
                 }
@@ -1441,11 +1605,11 @@ router.post(
 
         tx.get("SELECT * FROM discounts WHERE id = ? AND active = 1", [discount_id], (discountErr, discount) => {
           if (discountErr) {
-            finish(discountErr);
+            done(discountErr);
             return;
           }
           if (!discount) {
-            finish({ status: 400, message: "Desconto inválido." });
+            done({ status: 400, message: "Desconto inválido." });
             return;
           }
 
@@ -1484,13 +1648,51 @@ router.post(
             const maxDiscount = Number(settings.max_discount || 0);
             const discountPercent = total > 0 ? (discountAmount / total) * 100 : 0;
             if (maxDiscount > 0 && discountPercent > maxDiscount) {
-              finish({ status: 403, message: "Desconto acima do limite permitido." });
+              done({ status: 403, message: "Desconto acima do limite permitido." });
               return;
             }
             applySale(discount, discountAmount);
           });
         });
       });
+    };
+
+    runWithTransaction((tx, finish) => {
+      const processNext = (index) => {
+        if (index >= itemsFromBody.length) {
+          const totals = saleItems.reduce(
+            (acc, item) => {
+              acc.total += item.total;
+              acc.discount_amount += item.discount_amount;
+              acc.final_total += item.final_total;
+              return acc;
+            },
+            { total: 0, discount_amount: 0, final_total: 0 }
+          );
+          responsePayload = {
+            items: saleItems,
+            ...totals,
+          };
+          if (saleItems.length === 1) {
+            responsePayload = {
+              id: saleItems[0].id,
+              document_number: saleItems[0].document_number,
+              ...totals,
+              items: saleItems,
+            };
+          }
+          finish(null);
+          return;
+        }
+        processSaleItem(tx, itemsFromBody[index], (itemErr) => {
+          if (itemErr) {
+            finish(itemErr);
+            return;
+          }
+          processNext(index + 1);
+        });
+      };
+      processNext(0);
     }, (transactionErr) => {
       if (transactionErr) {
         if (transactionErr.status) {
@@ -1498,7 +1700,7 @@ router.post(
         }
         return res.status(500).json({ message: "Erro ao registrar venda." });
       }
-      return res.status(responseStatus).json(responsePayload);
+      return res.status(201).json(responsePayload);
     });
   }
 );
@@ -1583,6 +1785,369 @@ router.get("/api/audit-logs", authenticateToken, requireManager, (req, res) => {
       return res.json(rows);
     }
   );
+});
+
+router.post(
+  "/api/finance/cashflow",
+  authenticateToken,
+  requireSupervisor,
+  [
+    body("type").isIn(["in", "out"]).withMessage("Tipo inválido."),
+    body("category").trim().notEmpty().withMessage("Categoria é obrigatória."),
+    body("amount").isFloat({ gt: 0 }).withMessage("Valor inválido."),
+    body("reference").optional().isString().withMessage("Referência inválida."),
+    body("notes").optional().isString().withMessage("Observação inválida."),
+    body("occurred_at").optional().isISO8601().withMessage("Data inválida."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    const { type, category, amount, reference = "", notes = "", occurred_at = null } = req.body;
+
+    db.get(
+      `INSERT INTO finance_transactions (type, category, amount, reference, notes, recorded_by, occurred_at)
+       VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+       RETURNING id, type, category, amount, reference, notes, recorded_by, occurred_at`,
+      [type, category, amount, reference, notes, req.user.id, occurred_at],
+      (err, row) => {
+        if (err) {
+          return res.status(500).json({ message: "Erro ao registrar fluxo de caixa." });
+        }
+        logAudit({
+          action: "finance_cashflow_recorded",
+          details: { id: row.id, type, category, amount: Number(amount), reference },
+          performedBy: req.user.id,
+        });
+        return res.status(201).json(row);
+      }
+    );
+  }
+);
+
+router.get("/api/finance/cashflow", authenticateToken, requireSupervisor, (req, res) => {
+  const limit = Number(req.query.limit || 100);
+  const safeLimit = Number.isNaN(limit) ? 100 : Math.min(Math.max(limit, 1), 500);
+  const range = parseDateRange(req, res);
+  if (!range) {
+    return;
+  }
+
+  const dateFilter = buildDateFilter("occurred_at", range);
+  db.all(
+    `SELECT finance_transactions.*, users.name AS recorded_by_name
+     FROM finance_transactions
+     LEFT JOIN users ON users.id = finance_transactions.recorded_by
+     ${dateFilter.clause}
+     ORDER BY occurred_at DESC
+     LIMIT ?`,
+    [...dateFilter.params, safeLimit],
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao listar fluxo de caixa." });
+      }
+      return res.json(rows);
+    }
+  );
+});
+
+router.get("/api/finance/cashflow/export.csv", authenticateToken, requireSupervisor, (req, res) => {
+  const range = parseDateRange(req, res);
+  if (!range) {
+    return;
+  }
+  const dateFilter = buildDateFilter("occurred_at", range);
+  db.all(
+    `SELECT finance_transactions.*, users.name AS recorded_by_name
+     FROM finance_transactions
+     LEFT JOIN users ON users.id = finance_transactions.recorded_by
+     ${dateFilter.clause}
+     ORDER BY occurred_at DESC`,
+    dateFilter.params,
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao exportar fluxo de caixa." });
+      }
+      const header = ["id", "type", "category", "amount", "reference", "notes", "occurred_at", "recorded_by_name"];
+      const csvRows = [header.join(",")];
+      for (const row of rows) {
+        csvRows.push(
+          [
+            row.id,
+            row.type,
+            row.category,
+            row.amount,
+            row.reference,
+            row.notes,
+            row.occurred_at,
+            row.recorded_by_name,
+          ]
+            .map(toCsvValue)
+            .join(",")
+        );
+      }
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename=\"cashflow-${new Date().toISOString().slice(0, 10)}.csv\"`);
+      return res.send(csvRows.join("\n"));
+    }
+  );
+});
+
+router.get("/api/finance/daily-close", authenticateToken, requireSupervisor, (req, res) => {
+  const date = req.query.date || new Date().toISOString().slice(0, 10);
+  if (Number.isNaN(new Date(date).getTime())) {
+    return res.status(400).json({ message: "Data inválida." });
+  }
+
+  db.get(
+    `SELECT COALESCE(SUM(final_total), 0) AS sales_total
+     FROM sales
+     WHERE CAST(created_at AS DATE) = CAST(? AS DATE) AND cancelled_at IS NULL`,
+    [date],
+    (salesErr, salesRow) => {
+      if (salesErr) {
+        return res.status(500).json({ message: "Erro ao consolidar fechamento diário." });
+      }
+      db.get(
+        `SELECT COALESCE(SUM(products.price * stock_losses.quantity), 0) AS losses_total
+         FROM stock_losses
+         JOIN products ON products.id = stock_losses.product_id
+         WHERE CAST(stock_losses.created_at AS DATE) = CAST(? AS DATE)`,
+        [date],
+        (lossErr, lossRow) => {
+          if (lossErr) {
+            return res.status(500).json({ message: "Erro ao consolidar fechamento diário." });
+          }
+          db.get(
+            `SELECT COALESCE(SUM(CASE WHEN type = 'in' THEN amount ELSE -amount END), 0) AS finance_net
+             FROM finance_transactions
+             WHERE CAST(occurred_at AS DATE) = CAST(? AS DATE)`,
+            [date],
+            (financeErr, financeRow) => {
+              if (financeErr) {
+                return res.status(500).json({ message: "Erro ao consolidar fechamento diário." });
+              }
+              db.get(
+                `SELECT COALESCE(SUM(CASE WHEN type = 'supply' THEN amount ELSE -amount END), 0) AS cash_adjustments_net
+                 FROM cash_movements
+                 WHERE CAST(created_at AS DATE) = CAST(? AS DATE)`,
+                [date],
+                (cashErr, cashRow) => {
+                  if (cashErr) {
+                    return res.status(500).json({ message: "Erro ao consolidar fechamento diário." });
+                  }
+                  return res.json({
+                    date,
+                    sales_total: Number(salesRow?.sales_total || 0),
+                    losses_total: Number(lossRow?.losses_total || 0),
+                    finance_net: Number(financeRow?.finance_net || 0),
+                    cash_adjustments_net: Number(cashRow?.cash_adjustments_net || 0),
+                  });
+                }
+              );
+            }
+          );
+        }
+      );
+    }
+  );
+});
+
+router.get("/api/finance/daily-close/export.csv", authenticateToken, requireSupervisor, (req, res) => {
+  const date = req.query.date || new Date().toISOString().slice(0, 10);
+  if (Number.isNaN(new Date(date).getTime())) {
+    return res.status(400).json({ message: "Data inválida." });
+  }
+  db.get(
+    `SELECT COALESCE(SUM(final_total), 0) AS sales_total
+     FROM sales
+     WHERE CAST(created_at AS DATE) = CAST(? AS DATE) AND cancelled_at IS NULL`,
+    [date],
+    (salesErr, salesRow) => {
+      if (salesErr) {
+        return res.status(500).json({ message: "Erro ao exportar fechamento diário." });
+      }
+      db.get(
+        `SELECT COALESCE(SUM(products.price * stock_losses.quantity), 0) AS losses_total
+         FROM stock_losses
+         JOIN products ON products.id = stock_losses.product_id
+         WHERE CAST(stock_losses.created_at AS DATE) = CAST(? AS DATE)`,
+        [date],
+        (lossErr, lossRow) => {
+          if (lossErr) {
+            return res.status(500).json({ message: "Erro ao exportar fechamento diário." });
+          }
+          db.get(
+            `SELECT COALESCE(SUM(CASE WHEN type = 'in' THEN amount ELSE -amount END), 0) AS finance_net
+             FROM finance_transactions
+             WHERE CAST(occurred_at AS DATE) = CAST(? AS DATE)`,
+            [date],
+            (financeErr, financeRow) => {
+              if (financeErr) {
+                return res.status(500).json({ message: "Erro ao exportar fechamento diário." });
+              }
+              db.get(
+                `SELECT COALESCE(SUM(CASE WHEN type = 'supply' THEN amount ELSE -amount END), 0) AS cash_adjustments_net
+                 FROM cash_movements
+                 WHERE CAST(created_at AS DATE) = CAST(? AS DATE)`,
+                [date],
+                (cashErr, cashRow) => {
+                  if (cashErr) {
+                    return res.status(500).json({ message: "Erro ao exportar fechamento diário." });
+                  }
+                  const row = {
+                    date,
+                    sales_total: Number(salesRow?.sales_total || 0),
+                    losses_total: Number(lossRow?.losses_total || 0),
+                    finance_net: Number(financeRow?.finance_net || 0),
+                    cash_adjustments_net: Number(cashRow?.cash_adjustments_net || 0),
+                  };
+                  const header = Object.keys(row).join(",");
+                  const values = Object.values(row).map(toCsvValue).join(",");
+                  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+                  res.setHeader(
+                    "Content-Disposition",
+                    `attachment; filename=\"daily-close-${date}.csv\"`
+                  );
+                  return res.send(`${header}\n${values}`);
+                }
+              );
+            }
+          );
+        }
+      );
+    }
+  );
+});
+
+router.post(
+  "/api/finance/accounts",
+  authenticateToken,
+  requireSupervisor,
+  [
+    body("kind").isIn(["payable", "receivable"]).withMessage("Tipo de conta inválido."),
+    body("partner_name").trim().notEmpty().withMessage("Parceiro é obrigatório."),
+    body("description").trim().notEmpty().withMessage("Descrição é obrigatória."),
+    body("amount").isFloat({ gt: 0 }).withMessage("Valor inválido."),
+    body("due_date").isISO8601().withMessage("Vencimento inválido."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    const { kind, partner_name, description, amount, due_date } = req.body;
+    db.get(
+      `INSERT INTO finance_accounts (kind, partner_name, description, amount, due_date, created_by)
+       VALUES (?, ?, ?, ?, ?, ?)
+       RETURNING id, kind, partner_name, description, amount, due_date, status, created_at`,
+      [kind, partner_name, description, amount, due_date, req.user.id],
+      (err, row) => {
+        if (err) {
+          return res.status(500).json({ message: "Erro ao registrar conta." });
+        }
+        logAudit({
+          action: "finance_account_created",
+          details: { id: row.id, kind, partner_name, amount: Number(amount), due_date },
+          performedBy: req.user.id,
+        });
+        return res.status(201).json(row);
+      }
+    );
+  }
+);
+
+router.get("/api/finance/accounts", authenticateToken, requireSupervisor, (req, res) => {
+  const kind = req.query.kind || null;
+  const status = req.query.status || null;
+  const clauses = [];
+  const params = [];
+  if (kind) {
+    clauses.push("kind = ?");
+    params.push(kind);
+  }
+  if (status) {
+    clauses.push("status = ?");
+    params.push(status);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  db.all(
+    `SELECT finance_accounts.*, creator.name AS created_by_name, settler.name AS settled_by_name
+     FROM finance_accounts
+     LEFT JOIN users AS creator ON creator.id = finance_accounts.created_by
+     LEFT JOIN users AS settler ON settler.id = finance_accounts.settled_by
+     ${where}
+     ORDER BY due_date ASC, created_at DESC`,
+    params,
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao listar contas." });
+      }
+      return res.json(rows);
+    }
+  );
+});
+
+router.post("/api/finance/accounts/:id/settle", authenticateToken, requireSupervisor, (req, res) => {
+  const accountId = Number(req.params.id);
+  if (!Number.isInteger(accountId) || accountId < 1) {
+    return res.status(400).json({ message: "Conta inválida." });
+  }
+
+  runWithTransaction((tx, finish) => {
+    tx.get("SELECT * FROM finance_accounts WHERE id = ?", [accountId], (accountErr, account) => {
+      if (accountErr) {
+        finish(accountErr);
+        return;
+      }
+      if (!account) {
+        finish({ status: 404, message: "Conta não encontrada." });
+        return;
+      }
+      if (account.status === "settled") {
+        finish({ status: 409, message: "Conta já liquidada." });
+        return;
+      }
+
+      tx.run(
+        "UPDATE finance_accounts SET status = 'settled', settled_at = CURRENT_TIMESTAMP, settled_by = ? WHERE id = ?",
+        [req.user.id, accountId],
+        (updateErr) => {
+          if (updateErr) {
+            finish(updateErr);
+            return;
+          }
+          const cashflowType = account.kind === "payable" ? "out" : "in";
+          tx.run(
+            `INSERT INTO finance_transactions (type, category, amount, reference, notes, recorded_by, occurred_at)
+             VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+            [cashflowType, `account_${account.kind}`, account.amount, `ACC-${account.id}`, account.description, req.user.id],
+            (flowErr) => {
+              if (flowErr) {
+                finish(flowErr);
+                return;
+              }
+              finish(null);
+            }
+          );
+        }
+      );
+    });
+  }, (transactionErr) => {
+    if (transactionErr) {
+      if (transactionErr.status) {
+        return res.status(transactionErr.status).json({ message: transactionErr.message });
+      }
+      return res.status(500).json({ message: "Erro ao liquidar conta." });
+    }
+    logAudit({
+      action: "finance_account_settled",
+      details: { account_id: accountId },
+      performedBy: req.user.id,
+    });
+    return res.json({ status: "ok", account_id: accountId });
+  });
 });
 
 router.get("/api/reports/by-operator", authenticateToken, requireManager, (req, res) => {
@@ -1769,7 +2334,7 @@ router.post(
   requireApproval("cancel_sale"),
   [
     body("reason").trim().notEmpty().withMessage("Motivo é obrigatório."),
-    body("items").isInt({ min: 0 }).withMessage("Itens inválidos."),
+    body("sale_id").isInt({ min: 1 }).withMessage("Venda inválida."),
   ],
   (req, res) => {
     const errors = validationResult(req);
@@ -1777,14 +2342,278 @@ router.post(
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { reason, items } = req.body;
-    logAudit({
-      action: "cancel_sale",
-      details: { reason, items },
-      performedBy: req.user.id,
-      approvedBy: req.approval?.approved_by,
+    const { reason, sale_id } = req.body;
+    runWithTransaction((tx, finish) => {
+      tx.get("SELECT * FROM sales WHERE id = ?", [sale_id], (saleErr, sale) => {
+        if (saleErr) {
+          finish(saleErr);
+          return;
+        }
+        if (!sale) {
+          finish({ status: 404, message: "Venda não encontrada." });
+          return;
+        }
+        if (sale.cancelled_at) {
+          finish({ status: 409, message: "Venda já cancelada." });
+          return;
+        }
+
+        tx.run(
+          "UPDATE products SET current_stock = current_stock + ? WHERE id = ?",
+          [sale.quantity, sale.product_id],
+          (stockErr) => {
+            if (stockErr) {
+              finish(stockErr);
+              return;
+            }
+
+	            tx.run(
+	              `UPDATE sales
+	               SET cancelled_at = CURRENT_TIMESTAMP,
+	                   cancel_reason = ?,
+	                   cancelled_by = ?,
+	                   fiscal_status = 'cancelled'
+	               WHERE id = ?`,
+	              [reason, req.user.id, sale_id],
+              (updateErr) => {
+                if (updateErr) {
+                  finish(updateErr);
+                  return;
+                }
+                tx.run(
+                  "INSERT INTO stock_movements (product_id, type, delta, reason, performed_by) VALUES (?, ?, ?, ?, ?)",
+                  [sale.product_id, "cancellation", Number(sale.quantity), `Cancelamento venda #${sale_id}: ${reason}`, req.user.id],
+                  (movementErr) => {
+                    if (movementErr) {
+                      finish(movementErr);
+                      return;
+                    }
+                    finish(null);
+                  }
+                );
+              }
+            );
+          }
+        );
+      });
+    }, (transactionErr) => {
+      if (transactionErr) {
+        if (transactionErr.status) {
+          return res.status(transactionErr.status).json({ message: transactionErr.message });
+        }
+        return res.status(500).json({ message: "Erro ao cancelar venda." });
+      }
+      logAudit({
+        action: "cancel_sale",
+        details: { reason, sale_id },
+        performedBy: req.user.id,
+        approvedBy: req.approval?.approved_by,
+      });
+      return res.json({ status: "ok" });
     });
-    return res.json({ status: "ok" });
+  }
+);
+
+router.get("/api/pos/cash-session/current", authenticateToken, (req, res) => {
+  db.get(
+    `SELECT cash_sessions.*,
+            users.name AS operator_name
+     FROM cash_sessions
+     JOIN users ON users.id = cash_sessions.operator_id
+     WHERE cash_sessions.operator_id = ? AND cash_sessions.closed_at IS NULL
+     ORDER BY cash_sessions.opened_at DESC
+     LIMIT 1`,
+    [req.user.id],
+    (err, row) => {
+      if (err) {
+        return res.status(500).json({ message: "Erro ao buscar sessão de caixa." });
+      }
+      return res.json({ session: row || null });
+    }
+  );
+});
+
+router.post(
+  "/api/pos/cash-session/open",
+  authenticateToken,
+  [
+    body("opening_amount").isFloat({ min: 0 }).withMessage("Valor de abertura inválido."),
+    body("notes").optional().isString().withMessage("Observação inválida."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { opening_amount, notes = "" } = req.body;
+    db.get(
+      "SELECT id FROM cash_sessions WHERE operator_id = ? AND closed_at IS NULL LIMIT 1",
+      [req.user.id],
+      (lookupErr, existing) => {
+        if (lookupErr) {
+          return res.status(500).json({ message: "Erro ao abrir caixa." });
+        }
+        if (existing) {
+          return res.status(409).json({ message: "Já existe um caixa aberto para este operador." });
+        }
+
+        return db.get(
+          `INSERT INTO cash_sessions (operator_id, opening_amount, notes)
+           VALUES (?, ?, ?) RETURNING id, operator_id, opening_amount, opened_at, notes`,
+          [req.user.id, opening_amount, notes],
+          (insertErr, session) => {
+            if (insertErr) {
+              return res.status(500).json({ message: "Erro ao abrir caixa." });
+            }
+            logAudit({
+              action: "cash_session_opened",
+              details: { session_id: session.id, opening_amount: Number(opening_amount), notes },
+              performedBy: req.user.id,
+            });
+            return res.status(201).json(session);
+          }
+        );
+      }
+    );
+  }
+);
+
+router.post(
+  "/api/pos/cash-session/movement",
+  authenticateToken,
+  requireSupervisor,
+  [
+    body("type").isIn(["withdrawal", "supply"]).withMessage("Tipo de movimentação inválido."),
+    body("amount").isFloat({ gt: 0 }).withMessage("Valor inválido."),
+    body("reason").trim().notEmpty().withMessage("Motivo é obrigatório."),
+    body("session_id").optional().isInt({ min: 1 }).withMessage("Sessão inválida."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { type, amount, reason, session_id } = req.body;
+    const loadSql = session_id
+      ? "SELECT * FROM cash_sessions WHERE id = ? AND closed_at IS NULL"
+      : "SELECT * FROM cash_sessions WHERE operator_id = ? AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1";
+    const params = session_id ? [session_id] : [req.user.id];
+
+    db.get(loadSql, params, (sessionErr, session) => {
+      if (sessionErr) {
+        return res.status(500).json({ message: "Erro ao registrar movimentação de caixa." });
+      }
+      if (!session) {
+        return res.status(404).json({ message: "Sessão de caixa aberta não encontrada." });
+      }
+
+      return db.get(
+        `INSERT INTO cash_movements (session_id, type, amount, reason, performed_by)
+         VALUES (?, ?, ?, ?, ?) RETURNING id, session_id, type, amount, reason, performed_by, created_at`,
+        [session.id, type, amount, reason, req.user.id],
+        (insertErr, movement) => {
+          if (insertErr) {
+            return res.status(500).json({ message: "Erro ao registrar movimentação de caixa." });
+          }
+          logAudit({
+            action: "cash_session_movement",
+            details: { session_id: session.id, type, amount: Number(amount), reason },
+            performedBy: req.user.id,
+          });
+          return res.status(201).json(movement);
+        }
+      );
+    });
+  }
+);
+
+router.post(
+  "/api/pos/cash-session/close",
+  authenticateToken,
+  [
+    body("closing_amount").isFloat({ min: 0 }).withMessage("Valor de fechamento inválido."),
+    body("notes").optional().isString().withMessage("Observação inválida."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { closing_amount, notes = "" } = req.body;
+
+    let closedPayload = null;
+
+    return runWithTransaction((tx, finish) => {
+      tx.get(
+        "SELECT * FROM cash_sessions WHERE operator_id = ? AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
+        [req.user.id],
+        (sessionErr, session) => {
+          if (sessionErr) {
+            finish(sessionErr);
+            return;
+          }
+          if (!session) {
+            finish({ status: 404, message: "Nenhum caixa aberto para este operador." });
+            return;
+          }
+
+          tx.all("SELECT type, amount FROM cash_movements WHERE session_id = ?", [session.id], (moveErr, movements) => {
+            if (moveErr) {
+              finish(moveErr);
+              return;
+            }
+
+            const movementNet = (movements || []).reduce((acc, movement) => {
+              const value = Number(movement.amount || 0);
+              return movement.type === "supply" ? acc + value : acc - value;
+            }, 0);
+            const expectedAmount = Number(session.opening_amount || 0) + movementNet;
+            const differenceAmount = Number(closing_amount) - expectedAmount;
+
+            tx.run(
+              `UPDATE cash_sessions
+               SET closed_at = CURRENT_TIMESTAMP,
+                   closing_amount = ?,
+                   expected_amount = ?,
+                   difference_amount = ?,
+                   notes = CASE WHEN ? <> '' THEN ? ELSE notes END
+               WHERE id = ?`,
+              [closing_amount, expectedAmount, differenceAmount, notes, notes, session.id],
+              (updateErr) => {
+                if (updateErr) {
+                  finish(updateErr);
+                  return;
+                }
+                closedPayload = {
+                  id: session.id,
+                  opening_amount: Number(session.opening_amount),
+                  closing_amount: Number(closing_amount),
+                  expected_amount: expectedAmount,
+                  difference_amount: differenceAmount,
+                };
+                finish(null);
+              }
+            );
+          });
+        }
+      );
+    }, (transactionErr) => {
+      if (transactionErr) {
+        if (transactionErr.status) {
+          return res.status(transactionErr.status).json({ message: transactionErr.message });
+        }
+        return res.status(500).json({ message: "Erro ao fechar caixa." });
+      }
+      logAudit({
+        action: "cash_session_closed",
+        details: closedPayload,
+        performedBy: req.user.id,
+      });
+      return res.json(closedPayload);
+    });
   }
 );
 

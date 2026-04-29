@@ -32,6 +32,10 @@ const resetDatabase = () =>
     db.exec(
       `
       DELETE FROM stock_movements;
+      DELETE FROM cash_movements;
+      DELETE FROM cash_sessions;
+      DELETE FROM finance_transactions;
+      DELETE FROM finance_accounts;
       DELETE FROM stock_losses;
       DELETE FROM sales;
       DELETE FROM purchase_order_items;
