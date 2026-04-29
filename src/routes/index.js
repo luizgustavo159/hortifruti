@@ -257,6 +257,7 @@ router.get("/api/admin/ops/health", authenticateToken, requireAdmin, (req, res) 
 });
 
 router.get("/api/admin/ops/snapshot", authenticateToken, requireAdmin, (req, res) => {
+  const sendSnapshotError = () => res.status(500).json({ message: "Erro ao gerar snapshot operacional." });
   const rawDate = req.query.date || new Date().toISOString().slice(0, 10);
   const date = String(rawDate).trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -273,11 +274,11 @@ router.get("/api/admin/ops/snapshot", authenticateToken, requireAdmin, (req, res
   if (date > today) {
     return res.status(400).json({ message: "Data futura não permitida." });
   }
-  const next7Days = new Date(referenceDate.getTime() + 7 * 24 * 60 * 60 * 1000);
-  const next7DaysDate = next7Days.toISOString().slice(0, 10);
-  db.get(
-    "SELECT COUNT(*)::int AS low_stock_count FROM products WHERE current_stock <= min_stock",
-    [],
+        return sendSnapshotError();
+            return sendSnapshotError();
+                return sendSnapshotError();
+                    return sendSnapshotError();
+                        return sendSnapshotError();
     (lowErr, lowRow) => {
       if (lowErr) {
         return res.status(500).json({ message: "Erro ao gerar snapshot operacional." });
