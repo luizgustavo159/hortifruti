@@ -149,6 +149,21 @@ describe("health endpoint", () => {
       `INSERT INTO products (name, sku, unit_type, category_id, min_stock, max_stock, current_stock, price, expires_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       [
+        "Produto no dia base",
+        `SKU-0D-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+        "kg",
+        categoryId,
+        0,
+        10,
+        5,
+        10,
+        "2026-04-01T10:00:00.000Z",
+      ]
+    );
+    await run(
+      `INSERT INTO products (name, sku, unit_type, category_id, min_stock, max_stock, current_stock, price, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      [
         "Produto 6 dias",
         `SKU-6D-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
         "kg",
@@ -181,6 +196,6 @@ describe("health endpoint", () => {
       .set("Authorization", `Bearer ${token}`);
 
     expect(response.status).toBe(200);
-    expect(response.body.expiring_7d_count).toBe(1);
+    expect(response.body.expiring_7d_count).toBe(2);
   });
 });
