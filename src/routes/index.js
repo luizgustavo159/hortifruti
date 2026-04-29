@@ -269,6 +269,7 @@ router.get("/api/admin/ops/snapshot", authenticateToken, requireAdmin, (req, res
     return res.status(400).json({ message: "Data inválida." });
   }
   const next7Days = new Date(referenceDate.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const next7DaysDate = next7Days.toISOString().slice(0, 10);
   db.get(
     "SELECT COUNT(*)::int AS low_stock_count FROM products WHERE current_stock <= min_stock",
     [],
@@ -280,9 +281,9 @@ router.get("/api/admin/ops/snapshot", authenticateToken, requireAdmin, (req, res
         `SELECT COUNT(*)::int AS expiring_7d_count
          FROM products
          WHERE expires_at IS NOT NULL
-           AND expires_at >= ?
-           AND expires_at <= ?`,
-        [referenceDate.toISOString(), next7Days.toISOString()],
+           AND CAST(expires_at AS DATE) >= CAST(? AS DATE)
+           AND CAST(expires_at AS DATE) <= CAST(? AS DATE)`,
+        [date, next7DaysDate],
         (expErr, expRow) => {
           if (expErr) {
             return res.status(500).json({ message: "Erro ao gerar snapshot operacional." });
