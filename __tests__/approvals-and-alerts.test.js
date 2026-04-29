@@ -43,6 +43,10 @@ const resetDatabase = () =>
     db.exec(
       `
       DELETE FROM stock_movements;
+      DELETE FROM cash_movements;
+      DELETE FROM cash_sessions;
+      DELETE FROM finance_transactions;
+      DELETE FROM finance_accounts;
       DELETE FROM stock_losses;
       DELETE FROM sales;
       DELETE FROM purchase_order_items;
@@ -185,5 +189,61 @@ describe("approvals and alerts flows", () => {
     expect(response.status).toBe(200);
     expect(response.body.length).toBeGreaterThan(0);
     expect(response.body[0].message).toBe("Teste");
+  });
+
+  it("cancels a sale with approval and restores stock", async () => {
+    const { token: operatorToken } = await createUserWithSession({
+      role: "operator",
+      email: "operator-cancel@example.com",
+    });
+    const managerPassword = "senha1234";
+    await createUserWithSession({
+      role: "manager",
+      email: "manager-cancel@example.com",
+    });
+    await run(
+      "UPDATE users SET password_hash = ? WHERE email = ?",
+      [bcrypt.hashSync(managerPassword, 10), "manager-cancel@example.com"]
+    );
+    const { productId } = await createProduct({ stock: 10, price: 5 });
+
+    const saleResponse = await request(app)
+      .post("/api/sales")
+      .set("Authorization", `Bearer ${operatorToken}`)
+      .send({
+        product_id: productId,
+        quantity: 2,
+        payment_method: "dinheiro",
+      });
+    expect(saleResponse.status).toBe(201);
+
+    const approvalResponse = await request(app)
+      .post("/api/approvals")
+      .send({
+        email: "manager-cancel@example.com",
+        password: managerPassword,
+        action: "cancel_sale",
+        reason: "Cancelamento autorizado",
+      });
+    expect(approvalResponse.status).toBe(201);
+
+    const cancelResponse = await request(app)
+      .post("/api/pos/cancel-sale")
+      .set("Authorization", `Bearer ${operatorToken}`)
+      .set("x-approval-token", approvalResponse.body.token)
+      .send({
+        sale_id: saleResponse.body.id,
+        reason: "Cliente desistiu",
+      });
+
+    expect(cancelResponse.status).toBe(200);
+    const stockAfter = await get("SELECT current_stock FROM products WHERE id = ?", [productId]);
+    expect(Number(stockAfter.current_stock)).toBe(10);
+    const saleAfter = await get("SELECT cancelled_at, cancel_reason, fiscal_status FROM sales WHERE id = ?", [
+      saleResponse.body.id,
+    ]);
+    expect(saleAfter.cancelled_at).toBeTruthy();
+    expect(saleAfter.cancel_reason).toBe("Cliente desistiu");
+    expect(saleAfter.fiscal_status).toBe("cancelled");
   });
 });
