@@ -75,6 +75,11 @@ describe("health endpoint", () => {
     expect(response.body.tables.finance_accounts).toBe("ok");
   });
 
+  it("returns 401 for operational health request without token", async () => {
+    const response = await request(app).get("/api/admin/ops/health");
+    expect(response.status).toBe(401);
+  });
+
   it("returns 403 for operational health request by non-admin user", async () => {
     const token = await createSession("operator");
     const response = await request(app).get("/api/admin/ops/health").set("Authorization", `Bearer ${token}`);
@@ -93,6 +98,11 @@ describe("health endpoint", () => {
     expect(response.body).toHaveProperty("sales_total");
     expect(response.body).toHaveProperty("open_cash_sessions");
     expect(response.body).toHaveProperty("pending_accounts");
+  });
+
+  it("returns 401 for snapshot request without token", async () => {
+    const response = await request(app).get("/api/admin/ops/snapshot?date=2026-04-01");
+    expect(response.status).toBe(401);
   });
 
   it("returns 400 for invalid snapshot date", async () => {
