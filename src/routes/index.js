@@ -268,6 +268,10 @@ router.get("/api/admin/ops/snapshot", authenticateToken, requireAdmin, (req, res
   if (referenceDate.toISOString().slice(0, 10) !== date) {
     return res.status(400).json({ message: "Data inválida." });
   }
+  const today = new Date().toISOString().slice(0, 10);
+  if (date > today) {
+    return res.status(400).json({ message: "Data futura não permitida." });
+  }
   const next7Days = new Date(referenceDate.getTime() + 7 * 24 * 60 * 60 * 1000);
   const next7DaysDate = next7Days.toISOString().slice(0, 10);
   db.get(

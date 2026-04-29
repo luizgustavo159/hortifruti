@@ -123,6 +123,15 @@ describe("health endpoint", () => {
     expect(response.body.message).toBe("Data inválida.");
   });
 
+  it("returns 400 for future snapshot date", async () => {
+    const token = await createAdminSession();
+    const response = await request(app)
+      .get("/api/admin/ops/snapshot?date=2099-01-01")
+      .set("Authorization", `Bearer ${token}`);
+    expect(response.status).toBe(400);
+    expect(response.body.message).toBe("Data futura não permitida.");
+  });
+
   it("returns 403 for snapshot request by non-admin user", async () => {
     const token = await createSession("operator");
     const response = await request(app)
