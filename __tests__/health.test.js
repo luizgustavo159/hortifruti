@@ -114,6 +114,15 @@ describe("health endpoint", () => {
     expect(response.body.message).toBe("Data inválida.");
   });
 
+  it("accepts snapshot date with surrounding whitespace", async () => {
+    const token = await createAdminSession();
+    const response = await request(app)
+      .get("/api/admin/ops/snapshot?date=%202026-04-01%20")
+      .set("Authorization", `Bearer ${token}`);
+    expect(response.status).toBe(200);
+    expect(response.body.date).toBe("2026-04-01");
+  });
+
   it("returns 400 for impossible calendar snapshot date", async () => {
     const token = await createAdminSession();
     const response = await request(app)
