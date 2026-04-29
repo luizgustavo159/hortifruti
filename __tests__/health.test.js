@@ -75,6 +75,12 @@ describe("health endpoint", () => {
     expect(response.body.tables.finance_accounts).toBe("ok");
   });
 
+  it("returns 403 for operational health request by non-admin user", async () => {
+    const token = await createSession("operator");
+    const response = await request(app).get("/api/admin/ops/health").set("Authorization", `Bearer ${token}`);
+    expect(response.status).toBe(403);
+  });
+
   it("returns operational snapshot for admin", async () => {
     const token = await createAdminSession();
     const response = await request(app)
