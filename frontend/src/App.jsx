@@ -37,6 +37,7 @@ function ProtectedRoute({ children, requiredRole }) {
 
 export default function App() {
   const [sessionReady, setSessionReady] = useState(false);
+  const [, setAuthRefreshTick] = useState(0);
 
   useEffect(() => {
     const bootstrapSession = async () => {
@@ -62,6 +63,16 @@ export default function App() {
     };
 
     bootstrapSession();
+  }, []);
+
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      setAuthRefreshTick((current) => current + 1);
+    };
+
+    window.addEventListener("greenstore:unauthorized", handleUnauthorized);
+    return () => window.removeEventListener("greenstore:unauthorized", handleUnauthorized);
   }, []);
 
   if (!sessionReady) {

@@ -108,4 +108,21 @@ describe("apiFetch", () => {
     expect(getToken()).toBeNull();
     expect(getUser()).toBeNull();
   });
+  it("emits unauthorized event on 401", async () => {
+    setToken("jwt-token");
+    const unauthorizedListener = vi.fn();
+    window.addEventListener("greenstore:unauthorized", unauthorizedListener);
+
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: async () => JSON.stringify({ message: "Sessão expirada." }),
+    });
+
+    await expect(apiFetch("/auth/me")).rejects.toThrow("Sessão expirada.");
+    expect(unauthorizedListener).toHaveBeenCalledTimes(1);
+
+    window.removeEventListener("greenstore:unauthorized", unauthorizedListener);
+  });
+
 });
