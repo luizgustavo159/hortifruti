@@ -27,10 +27,6 @@ function ProtectedRoute({ children, requiredRole }) {
     return <Navigate to="/" replace />;
   }
 
-  const currentUser = getUser();
-  if (!currentUser) {
-    return <div style={{ padding: "24px" }}>Carregando permissões...</div>;
-  }
 
   if (requiredRole && !hasRequiredRole(requiredRole)) {
     return <Navigate to="/caixa" replace />;
