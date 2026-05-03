@@ -252,33 +252,15 @@ export function Caixa() {
                       </button>
                     </div>
 
-                    <div className="item-total">
+                        <div className="item-total">
                       R$ {(item.price * item.quantity).toFixed(2)}
                     </div>
 
-                    <select
-                      value={item.discount_id || ""}
-                      onChange={(e) =>
-                        applyDiscountToItem(
-                          item.id,
-                          e.target.value ? parseInt(e.target.value) : null
-                        )
-                      }
-                      className="discount-select"
-                    >
-                      <option value="">Sem desconto</option>
-                      {discounts.map((discount) => (
-                        <option key={discount.id} value={discount.id}>
-                          {discount.name}
-                        </option>
-                      ))}
-                    </select>
-
                     <button
-                      className="btn-remove"
+                      className="cart-item-remove"
                       onClick={() => removeFromCart(item.id)}
                     >
-                      ✕
+                      Remover
                     </button>
                   </div>
                 ))}
@@ -315,20 +297,22 @@ export function Caixa() {
                 </select>
               </div>
 
-              <button
-                className="btn-checkout"
-                onClick={handleCheckout}
-                disabled={processingPayment}
-              >
-                {processingPayment ? "Processando..." : "Finalizar Venda"}
-              </button>
+              <div className="cart-actions">
+                <button
+                  className="btn-finalize"
+                  onClick={handleCheckout}
+                  disabled={processingPayment || cartItems.length === 0}
+                >
+                  {processingPayment ? "Processando..." : "Finalizar Venda"}
+                </button>
 
-              <button
-                className="btn-clear-cart"
-                onClick={() => setCartItems([])}
-              >
-                Limpar Carrinho
-              </button>
+                <button
+                  className="btn-clear"
+                  onClick={() => setCartItems([])}
+                >
+                  Limpar Carrinho
+                </button>
+              </div>
             </>
           ) : (
             <p className="empty-cart">Carrinho vazio</p>
