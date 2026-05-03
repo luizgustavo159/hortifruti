@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { PageShell } from "../components/PageShell";
 import { apiFetch } from "../lib/api";
+import { normalizeApiError } from "../lib/api";
 import "./Estoque.css";
 
 export function Estoque() {
@@ -52,7 +53,7 @@ export function Estoque() {
         setSuppliers(suppliersData || []);
         setRestockSuggestions(suggestionsData || []);
       } catch (loadError) {
-        setError(loadError.message || "Falha ao carregar dados de estoque.");
+        setError(normalizeApiError(loadError));
       } finally {
         setLoading(false);
       }
@@ -112,7 +113,7 @@ export function Estoque() {
 
       setTimeout(() => setSuccessMessage(""), 3000);
     } catch (createError) {
-      setError(createError.message || "Erro ao criar produto.");
+      setError(normalizeApiError(createError));
     }
   };
 
@@ -153,7 +154,7 @@ export function Estoque() {
 
       setTimeout(() => setSuccessMessage(""), 3000);
     } catch (movementError) {
-      setError(movementError.message || "Erro ao registrar movimentação.");
+      setError(normalizeApiError(movementError));
     }
   };
 

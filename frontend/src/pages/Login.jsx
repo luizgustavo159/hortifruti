@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "../lib/api";
+import { normalizeApiError } from "../lib/api";
 import { setToken, setUser } from "../lib/auth";
 
 export function Login() {
@@ -24,7 +25,7 @@ export function Login() {
       setUser(currentUser);
       navigate("/caixa");
     } catch (submitError) {
-      setError(submitError.message || "Falha ao autenticar.");
+      setError(normalizeApiError(submitError));
     } finally {
       setLoading(false);
     }
