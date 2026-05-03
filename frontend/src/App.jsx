@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import "./animations.css";
 import { Login } from "./pages/Login";
 import { Caixa } from "./pages/Caixa";
 import { Estoque } from "./pages/Estoque";

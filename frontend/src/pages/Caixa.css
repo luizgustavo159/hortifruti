@@ -37,6 +37,25 @@
   transition: all 0.3s ease;
   background: #f9fafb;
   font-family: inherit;
+  position: relative;
+}
+
+.search-input::placeholder {
+  content: 'Buscar... (F1)';
+}
+
+.keyboard-hint {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  background: #10b981;
+  color: white;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  pointer-events: none;
 }
 
 .search-input:focus {

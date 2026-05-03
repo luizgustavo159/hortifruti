@@ -113,10 +113,33 @@ let mockData = {
     },
   ],
   discounts: [
-    { id: 1, name: "10% Desconto", type: "percent", value: 10 },
-    { id: 2, name: "5% Desconto", type: "percent", value: 5 },
-    { id: 3, name: "R$ 5 Desconto", type: "fixed", value: 5 },
-    { id: 4, name: "Compre 3 Leve 4", type: "bulk", value: 25 },
+    {
+      id: 1,
+      name: "Quarta Verde",
+      type: "percentage",
+      value: 15,
+      description: "15% de desconto em frutas e legumes as quartas",
+      active: true,
+      created_at: new Date().toISOString(),
+    },
+    {
+      id: 2,
+      name: "Combo Feira",
+      type: "fixed",
+      value: 12,
+      description: "3 itens por R$ 12",
+      active: true,
+      created_at: new Date().toISOString(),
+    },
+    {
+      id: 3,
+      name: "Desconto Sênior",
+      type: "percentage",
+      value: 10,
+      description: "10% para clientes acima de 60 anos",
+      active: true,
+      created_at: new Date().toISOString(),
+    },
   ],
   sales: [],
   suppliers: [
@@ -551,6 +574,40 @@ app.get("/api/logs", authenticateToken, (req, res) => {
     });
   }
   res.json(filteredLogs.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)));
+});
+
+// ============ ROTAS DE DESCONTOS ============
+app.get("/api/discounts", authenticateToken, (req, res) => {
+  res.json(mockData.discounts || []);
+});
+
+app.post("/api/discounts", authenticateToken, (req, res) => {
+  const { name, type, value, description } = req.body;
+  if (!name || !type || value <= 0) {
+    return res.status(400).json({ message: "Campos obrigatórios faltando" });
+  }
+  const newDiscount = {
+    id: Math.max(...(mockData.discounts || []).map((d) => d.id || 0), 0) + 1,
+    name,
+    type,
+    value,
+    description,
+    active: true,
+    created_at: new Date().toISOString(),
+  };
+  if (!mockData.discounts) mockData.discounts = [];
+  mockData.discounts.push(newDiscount);
+  res.status(201).json(newDiscount);
+});
+
+app.delete("/api/discounts/:id", authenticateToken, (req, res) => {
+  const { id } = req.params;
+  const index = (mockData.discounts || []).findIndex((d) => d.id === parseInt(id));
+  if (index === -1) {
+    return res.status(404).json({ message: "Desconto não encontrado" });
+  }
+  mockData.discounts.splice(index, 1);
+  res.json({ message: "Desconto deletado com sucesso" });
 });
 
 // ============ ROTAS DE CONFIGURAÇÕES ============
