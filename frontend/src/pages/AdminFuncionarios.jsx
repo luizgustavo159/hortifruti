@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { PageShell } from "../components/PageShell";
 import { apiFetch } from "../lib/api";
+import { normalizeApiError } from "../lib/api";
 import "./AdminFuncionarios.css";
 
 export function AdminFuncionarios() {
@@ -36,7 +37,7 @@ export function AdminFuncionarios() {
         const data = await apiFetch("/users");
         setEmployees(data || []);
       } catch (loadError) {
-        setError(loadError.message || "Falha ao carregar funcionários.");
+        setError(normalizeApiError(loadError));
       } finally {
         setLoading(false);
       }
@@ -81,7 +82,7 @@ export function AdminFuncionarios() {
 
       setTimeout(() => setSuccessMessage(""), 3000);
     } catch (createError) {
-      setError(createError.message || "Erro ao criar funcionário.");
+      setError(normalizeApiError(createError));
     }
   };
 
@@ -116,7 +117,7 @@ export function AdminFuncionarios() {
 
       setTimeout(() => setSuccessMessage(""), 3000);
     } catch (editError) {
-      setError(editError.message || "Erro ao atualizar funcionário.");
+      setError(normalizeApiError(editError));
     }
   };
 
@@ -137,7 +138,7 @@ export function AdminFuncionarios() {
 
       setTimeout(() => setSuccessMessage(""), 3000);
     } catch (deleteError) {
-      setError(deleteError.message || "Erro ao deletar funcionário.");
+      setError(normalizeApiError(deleteError));
     }
   };
 
