@@ -1,11 +1,14 @@
 import { useEffect, useState, useCallback } from "react";
 import { PageShell } from "../components/PageShell";
-import { apiFetch } from "../lib/api";
+import { useCart } from "../context/CartContext";
+import { normalizeApiError } from "../lib/api";
+import { api } from "../services/api";
 import "./Caixa.css";
 
 export function Caixa() {
   const [products, setProducts] = useState([]);
-  const [cartItems, setCartItems] = useState([]);
+  const { state: cartState, dispatch, totalItems } = useCart();
+  const cartItems = cartState.items;
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -13,6 +16,7 @@ export function Caixa() {
   const [processingPayment, setProcessingPayment] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [selectedDiscount, setSelectedDiscount] = useState(null);
+  const [fullScreenMode, setFullScreenMode] = useState(false);
   const [discounts, setDiscounts] = useState([]);
 
   // Carregar produtos e descontos ao montar o componente
@@ -22,13 +26,13 @@ export function Caixa() {
       setError("");
       try {
         const [productsData, discountsData] = await Promise.all([
-          apiFetch("/products"),
-          apiFetch("/discounts"),
+          api.getProducts(),
+          api.getDiscounts(),
         ]);
         setProducts(productsData || []);
         setDiscounts(discountsData || []);
       } catch (loadError) {
-        setError(loadError.message || "Falha ao carregar dados.");
+        setError(normalizeApiError(loadError));
       } finally {
         setLoading(false);
       }
@@ -43,23 +47,13 @@ export function Caixa() {
 
   // Adicionar produto ao carrinho
   const addToCart = useCallback((product) => {
-    setCartItems((prev) => {
-      const existing = prev.find((item) => item.id === product.id);
-      if (existing) {
-        return prev.map((item) =>
-          item.id === product.id
-            ? { ...item, quantity: item.quantity + 1 }
-            : item
-        );
-      }
-      return [...prev, { ...product, quantity: 1, discount_id: null }];
-    });
-  }, []);
+    dispatch({ type: "ADD_ITEM", payload: product });
+  }, [dispatch]);
 
   // Remover item do carrinho
   const removeFromCart = useCallback((productId) => {
-    setCartItems((prev) => prev.filter((item) => item.id !== productId));
-  }, []);
+    dispatch({ type: "REMOVE_ITEM", payload: productId });
+  }, [dispatch]);
 
   // Atualizar quantidade do item
   const updateQuantity = useCallback((productId, quantity) => {
@@ -67,20 +61,33 @@ export function Caixa() {
       removeFromCart(productId);
       return;
     }
-    setCartItems((prev) =>
-      prev.map((item) =>
-        item.id === productId ? { ...item, quantity } : item
-      )
-    );
-  }, [removeFromCart]);
+    dispatch({ type: "UPDATE_QUANTITY", payload: { productId, quantity } });
+  }, [removeFromCart, dispatch]);
 
   // Aplicar desconto a um item
   const applyDiscountToItem = useCallback((productId, discountId) => {
-    setCartItems((prev) =>
-      prev.map((item) =>
-        item.id === productId ? { ...item, discount_id: discountId } : item
-      )
-    );
+    dispatch({ type: "UPDATE_DISCOUNT", payload: { productId, discountId } });
+  }, [dispatch]);
+
+
+  const toggleFullScreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+        setFullScreenMode(true);
+      } else {
+        await document.exitFullscreen();
+        setFullScreenMode(false);
+      }
+    } catch (_error) {
+      setError("Não foi possível alternar para tela cheia neste dispositivo.");
+    }
+  };
+
+  useEffect(() => {
+    const onFsChange = () => setFullScreenMode(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
   }, []);
 
   // Calcular total do carrinho
@@ -133,23 +140,20 @@ export function Caixa() {
         discount_id: item.discount_id,
       }));
 
-      const response = await apiFetch("/sales", {
-        method: "POST",
-        body: JSON.stringify({
-          items: saleItems,
-          payment_method: paymentMethod,
-        }),
+      const response = await api.createSale({
+        items: saleItems,
+        payment_method: paymentMethod,
       });
 
       setSuccessMessage(
         `Venda finalizada com sucesso! Documento: ${response.document_number || response.id}`
       );
-      setCartItems([]);
+      dispatch({ type: "CLEAR_CART" });
       setPaymentMethod("cash");
 
       setTimeout(() => setSuccessMessage(""), 5000);
     } catch (checkoutError) {
-      setError(checkoutError.message || "Erro ao finalizar venda.");
+      setError(normalizeApiError(checkoutError));
     } finally {
       setProcessingPayment(false);
     }
@@ -159,6 +163,11 @@ export function Caixa() {
     <PageShell
       title="Frente de Caixa"
       subtitle="Ponto de Venda - Registre vendas em tempo real"
+      actions={
+        <button className="button" type="button" onClick={toggleFullScreen}>
+          {fullScreenMode ? "Sair da Tela Cheia" : "Tela Cheia"}
+        </button>
+      }
     >
       <div className="pos-container">
         {/* Seção de Produtos */}
@@ -171,6 +180,13 @@ export function Caixa() {
               onChange={(e) => setSearchTerm(e.target.value)}
               className="search-input"
             />
+            <div className="numeric-pad">
+              {["1","2","3","4","5","6","7","8","9","0"].map((n) => (
+                <button key={n} type="button" onClick={() => setSearchTerm((prev) => `${prev}${n}`)}>{n}</button>
+              ))}
+              <button type="button" onClick={() => setSearchTerm((prev) => prev.slice(0, -1))}>⌫</button>
+              <button type="button" onClick={() => setSearchTerm("")}>Limpar</button>
+            </div>
           </div>
 
           {loading && <p className="loading">Carregando produtos...</p>}
@@ -209,7 +225,7 @@ export function Caixa() {
 
         {/* Seção de Carrinho */}
         <div className="pos-cart">
-          <h3>Carrinho</h3>
+          <h3>Carrinho ({totalItems})</h3>
 
           {successMessage && (
             <div className="success-message">{successMessage}</div>

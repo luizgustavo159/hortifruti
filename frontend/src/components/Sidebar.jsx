@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { apiFetch } from "../lib/api";
 import { clearToken, clearUser, getAuthUser, hasRequiredRole } from "../lib/auth";
@@ -16,6 +17,12 @@ export function Sidebar() {
   const navigate = useNavigate();
   const user = getAuthUser() || { name: "Admin Demo", role: "admin" };
   const items = navItems;
+  const [theme, setTheme] = useState(() => localStorage.getItem("greenstore_theme") || "light");
+
+  useEffect(() => {
+    document.body.classList.toggle("theme-dark", theme === "dark");
+    localStorage.setItem("greenstore_theme", theme);
+  }, [theme]);
 
   const logout = async () => {
     try {
@@ -44,6 +51,9 @@ export function Sidebar() {
       </nav>
       <div>
         <span className="badge">{user?.role || "sem sessão"}</span>
+        <button className="button" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} style={{ marginTop: "12px", width: "100%" }} type="button">
+          {theme === "dark" ? "Tema Claro" : "Tema Escuro"}
+        </button>
         <button className="button" onClick={logout} style={{ marginTop: "12px", width: "100%" }} type="button">
           Sair
         </button>
