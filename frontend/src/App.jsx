@@ -1,22 +1,41 @@
 import { useEffect, useState } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import "./animations.css";
-import { Login } from "./pages/Login";
-import { Caixa } from "./pages/Caixa";
-import { Estoque } from "./pages/Estoque";
-import { Descontos } from "./pages/Descontos";
+import { AdminConfiguracao } from "./pages/AdminConfiguracao";
 import { AdminDashboard } from "./pages/AdminDashboard";
+import { AdminFuncionarios } from "./pages/AdminFuncionarios";
 import { AdminLogs } from "./pages/AdminLogs";
 import { AdminPerfil } from "./pages/AdminPerfil";
 import { AdminPoliticas } from "./pages/AdminPoliticas";
 import { AdminRelatorios } from "./pages/AdminRelatorios";
-import { AdminFuncionarios } from "./pages/AdminFuncionarios";
-import { AdminConfiguracao } from "./pages/AdminConfiguracao";
+import { Caixa } from "./pages/Caixa";
+import { Descontos } from "./pages/Descontos";
+import { Estoque } from "./pages/Estoque";
+import { Login } from "./pages/Login";
 import { apiFetch } from "./lib/api";
-import { clearToken, clearUser, getUser, hasRequiredRole, isAuthenticated, setUser } from "./lib/auth";
+import {
+  clearToken,
+  clearUser,
+  getUser,
+  hasRequiredRole,
+  isAuthenticated,
+  setUser,
+} from "./lib/auth";
 
 function ProtectedRoute({ children, requiredRole }) {
-  // Modo demonstração: Permitir acesso total
+  if (!isAuthenticated()) {
+    return <Navigate to="/" replace />;
+  }
+
+  const currentUser = getUser();
+  if (!currentUser) {
+    return <div style={{ padding: "24px" }}>Carregando permissões...</div>;
+  }
+
+  if (requiredRole && !hasRequiredRole(requiredRole)) {
+    return <Navigate to="/caixa" replace />;
+  }
+
   return children;
 }
 
@@ -29,10 +48,12 @@ export default function App() {
         setSessionReady(true);
         return;
       }
+
       if (getUser()) {
         setSessionReady(true);
         return;
       }
+
       try {
         const profile = await apiFetch("/auth/me");
         setUser(profile);
@@ -43,6 +64,7 @@ export default function App() {
         setSessionReady(true);
       }
     };
+
     bootstrapSession();
   }, []);
 
@@ -57,6 +79,7 @@ export default function App() {
           path="/"
           element={isAuthenticated() ? <Navigate to="/caixa" replace /> : <Login />}
         />
+
         <Route
           path="/caixa"
           element={
@@ -65,6 +88,7 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/estoque"
           element={
@@ -73,6 +97,7 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/descontos"
           element={
@@ -81,6 +106,7 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/admin"
           element={
@@ -89,6 +115,7 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/admin/logs"
           element={
@@ -97,6 +124,7 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/admin/perfil"
           element={
@@ -105,6 +133,7 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/admin/politicas"
           element={
@@ -113,6 +142,7 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/admin/relatorios"
           element={
@@ -121,6 +151,7 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/admin/funcionarios"
           element={
@@ -129,14 +160,7 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-        <Route
-          path="/admin/logs"
-          element={
-            <ProtectedRoute requiredRole="admin">
-              <AdminLogs />
-            </ProtectedRoute>
-          }
-        />
+
         <Route
           path="/admin/configuracao"
           element={
@@ -145,6 +169,8 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
+        <Route path="*" element={<Navigate to={isAuthenticated() ? "/caixa" : "/"} replace />} />
       </Routes>
     </BrowserRouter>
   );
