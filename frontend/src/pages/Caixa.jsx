@@ -13,6 +13,7 @@ export function Caixa() {
   const [processingPayment, setProcessingPayment] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [selectedDiscount, setSelectedDiscount] = useState(null);
+  const [fullScreenMode, setFullScreenMode] = useState(false);
   const [discounts, setDiscounts] = useState([]);
 
   // Carregar produtos e descontos ao montar o componente
@@ -81,6 +82,27 @@ export function Caixa() {
         item.id === productId ? { ...item, discount_id: discountId } : item
       )
     );
+  }, []);
+
+
+  const toggleFullScreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+        setFullScreenMode(true);
+      } else {
+        await document.exitFullscreen();
+        setFullScreenMode(false);
+      }
+    } catch (_error) {
+      setError("Não foi possível alternar para tela cheia neste dispositivo.");
+    }
+  };
+
+  useEffect(() => {
+    const onFsChange = () => setFullScreenMode(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
   }, []);
 
   // Calcular total do carrinho
@@ -159,6 +181,11 @@ export function Caixa() {
     <PageShell
       title="Frente de Caixa"
       subtitle="Ponto de Venda - Registre vendas em tempo real"
+      actions={
+        <button className="button" type="button" onClick={toggleFullScreen}>
+          {fullScreenMode ? "Sair da Tela Cheia" : "Tela Cheia"}
+        </button>
+      }
     >
       <div className="pos-container">
         {/* Seção de Produtos */}
