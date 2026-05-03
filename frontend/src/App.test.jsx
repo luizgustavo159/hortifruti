@@ -116,4 +116,19 @@ describe("App session bootstrap", () => {
     expect(await screen.findByText("login-page")).toBeTruthy();
   });
 
+  it("redirects to login after token removal in another tab", async () => {
+    window.history.pushState({}, "", "/admin");
+    authState.isAuthenticated = true;
+    authState.user = { id: 1, role: "admin" };
+    authState.hasRequiredRole = true;
+
+    render(<App />);
+    expect(await screen.findByText("admin-page")).toBeTruthy();
+
+    authState.isAuthenticated = false;
+    window.dispatchEvent(new StorageEvent("storage", { key: "greenstore_token", newValue: null }));
+
+    expect(await screen.findByText("login-page")).toBeTruthy();
+  });
+
 });

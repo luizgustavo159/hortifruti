@@ -76,6 +76,18 @@ export default function App() {
     return () => window.removeEventListener("greenstore:unauthorized", handleUnauthorized);
   }, []);
 
+
+  useEffect(() => {
+    const handleStorageSync = (event) => {
+      if (event.key === "greenstore_token" || event.key === "greenstore_user" || event.key === null) {
+        setAuthRefreshTick((current) => current + 1);
+      }
+    };
+
+    window.addEventListener("storage", handleStorageSync);
+    return () => window.removeEventListener("storage", handleStorageSync);
+  }, []);
+
   if (!sessionReady) {
     return <div style={{ padding: "24px" }}>Carregando sessão...</div>;
   }
