@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { PageShell } from "../components/PageShell";
 import { apiFetch } from "../lib/api";
+import { normalizeApiError } from "../lib/api";
 import "./AdminRelatorios.css";
 
 export function AdminRelatorios() {
@@ -74,7 +75,7 @@ export function AdminRelatorios() {
         const reportData = await apiFetch(endpoint);
         setData(reportData || []);
       } catch (loadError) {
-        setError(loadError.message || "Falha ao carregar relatório.");
+        setError(normalizeApiError(loadError));
       } finally {
         setLoading(false);
       }
