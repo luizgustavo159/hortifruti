@@ -1,6 +1,13 @@
 import { clearToken, clearUser, getToken } from "./auth";
 
 const API_BASE = "/api";
+const API_TIMEOUT_MS = 15000;
+
+const emitUnauthorizedEvent = () => {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("greenstore:unauthorized"));
+  }
+};
 
 export async function apiFetch(path, options = {}) {
   const token = getToken();
@@ -26,10 +33,28 @@ export async function apiFetch(path, options = {}) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers,
-  });
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timeoutHandle = controller
+    ? setTimeout(() => controller.abort("request-timeout"), API_TIMEOUT_MS)
+    : null;
+
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers,
+      signal: options.signal || controller?.signal,
+    });
+  } catch (requestError) {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    const isAbort = requestError?.name === "AbortError" || requestError === "request-timeout";
+    const error = new Error(isAbort ? "Tempo de requisição excedido." : "Falha de conexão com o servidor.");
+    error.status = 0;
+    error.data = null;
+    throw error;
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
 
   const text = await response.text();
   let data = null;
@@ -45,6 +70,7 @@ export async function apiFetch(path, options = {}) {
     if (response.status === 401) {
       clearToken();
       clearUser();
+      emitUnauthorizedEvent();
     }
     const message = data?.message || "Erro na requisição.";
     const error = new Error(message);
