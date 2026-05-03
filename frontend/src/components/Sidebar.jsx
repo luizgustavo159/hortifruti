@@ -5,14 +5,17 @@ import { clearToken, clearUser, getAuthUser, hasRequiredRole } from "../lib/auth
 const navItems = [
   { to: "/caixa", label: "Caixa" },
   { to: "/estoque", label: "Estoque" },
-  { to: "/descontos", label: "Descontos", minRole: "manager" },
-  { to: "/admin", label: "Admin", minRole: "admin" },
+  { to: "/descontos", label: "Descontos" },
+  { to: "/admin", label: "Dashboard Admin" },
+  { to: "/admin/funcionarios", label: "Funcionários" },
+  { to: "/admin/logs", label: "Logs" },
+  { to: "/admin/configuracao", label: "Configurações" },
 ];
 
 export function Sidebar() {
   const navigate = useNavigate();
-  const user = getAuthUser();
-  const items = navItems.filter((item) => !item.minRole || hasRequiredRole(item.minRole));
+  const user = getAuthUser() || { name: "Admin Demo", role: "admin" };
+  const items = navItems;
 
   const logout = async () => {
     try {

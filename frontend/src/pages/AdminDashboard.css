@@ -1,0 +1,200 @@
+.dashboard-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.date-filter {
+  display: flex;
+  gap: 16px;
+  background: white;
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+}
+
+.date-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.date-group label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+}
+
+.date-group input {
+  padding: 8px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.date-group input:focus {
+  outline: none;
+  border-color: #4caf50;
+}
+
+.error-message {
+  background: #ffebee;
+  color: #c62828;
+  padding: 12px 16px;
+  border-radius: 4px;
+  border-left: 4px solid #f44336;
+}
+
+.value-large {
+  font-size: 28px;
+  color: #4caf50;
+}
+
+.value-large.loss {
+  color: #f44336;
+}
+
+.value-large.warning {
+  color: #ff9800;
+}
+
+.card-subtitle {
+  margin: 8px 0 0 0;
+  font-size: 12px;
+  color: #999;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+  gap: 24px;
+}
+
+.card.full-width {
+  grid-column: 1 / -1;
+}
+
+.report-table {
+  overflow-x: auto;
+}
+
+.report-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.report-table thead {
+  background: #f5f5f5;
+  border-bottom: 2px solid #e0e0e0;
+}
+
+.report-table th {
+  padding: 12px;
+  text-align: left;
+  font-weight: 600;
+  color: #333;
+}
+
+.report-table td {
+  padding: 12px;
+  border-bottom: 1px solid #e0e0e0;
+  color: #666;
+}
+
+.report-table tbody tr:hover {
+  background: #f9f9f9;
+}
+
+.percentage-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.percentage-bar .bar {
+  height: 6px;
+  background: linear-gradient(90deg, #4caf50, #8bc34a);
+  border-radius: 3px;
+  min-width: 50px;
+}
+
+.no-data {
+  text-align: center;
+  color: #999;
+  padding: 24px;
+  font-size: 13px;
+}
+
+.loading {
+  text-align: center;
+  color: #999;
+  padding: 24px;
+}
+
+.low-stock-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.low-stock-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: #fff3e0;
+  border-left: 4px solid #ff9800;
+  border-radius: 4px;
+}
+
+.item-info h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+}
+
+.item-details {
+  margin: 4px 0 0 0;
+  font-size: 12px;
+  color: #666;
+}
+
+.item-status {
+  display: flex;
+  gap: 8px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.badge.critical {
+  background: #ffebee;
+  color: #c62828;
+}
+
+@media (max-width: 1024px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .date-filter {
+    flex-direction: column;
+  }
+
+  .report-table {
+    font-size: 12px;
+  }
+
+  .report-table th,
+  .report-table td {
+    padding: 8px;
+  }
+}
