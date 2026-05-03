@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { PageShell } from "../components/PageShell";
 import { apiFetch } from "../lib/api";
+import { normalizeApiError } from "../lib/api";
 import "./Descontos.css";
 
 export function Descontos() {
@@ -58,7 +59,7 @@ export function Descontos() {
       loadDiscounts();
       setTimeout(() => setSuccessMessage(""), 3000);
     } catch (err) {
-      setError(err.message || "Erro ao criar desconto.");
+      setError(normalizeApiError(err));
     } finally {
       setLoading(false);
     }
@@ -73,7 +74,7 @@ export function Descontos() {
         loadDiscounts();
         setTimeout(() => setSuccessMessage(""), 3000);
       } catch (err) {
-        setError(err.message || "Erro ao deletar desconto.");
+        setError(normalizeApiError(err));
       }
     }
   };

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { apiFetch } from "./api";
+import { apiFetch, normalizeApiError } from "./api";
 import { clearToken, getToken, getUser, setToken, setUser } from "./auth";
 
 describe("apiFetch", () => {
@@ -10,6 +10,7 @@ describe("apiFetch", () => {
 
   afterEach(() => {
     clearToken();
+    vi.useRealTimers();
   });
 
   it("sends authorization header when token exists", async () => {
@@ -108,4 +109,59 @@ describe("apiFetch", () => {
     expect(getToken()).toBeNull();
     expect(getUser()).toBeNull();
   });
+  it("emits unauthorized event on 401", async () => {
+    setToken("jwt-token");
+    const unauthorizedListener = vi.fn();
+    window.addEventListener("greenstore:unauthorized", unauthorizedListener);
+
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: async () => JSON.stringify({ message: "Sessão expirada." }),
+    });
+
+    await expect(apiFetch("/auth/me")).rejects.toThrow("Sessão expirada.");
+    expect(unauthorizedListener).toHaveBeenCalledTimes(1);
+
+    window.removeEventListener("greenstore:unauthorized", unauthorizedListener);
+  });
+
+  it("throws friendly network error when fetch fails", async () => {
+    vi.spyOn(global, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
+
+    await expect(apiFetch("/health")).rejects.toMatchObject({
+      message: "Falha de conexão com o servidor.",
+      status: 0,
+    });
+  });
+
+  it("throws timeout error when request exceeds limit", async () => {
+    vi.useFakeTimers();
+
+    vi.spyOn(global, "fetch").mockImplementation((_url, options) => {
+      return new Promise((_, reject) => {
+        options.signal.addEventListener("abort", () => {
+          const abortError = new DOMException("Aborted", "AbortError");
+          reject(abortError);
+        });
+      });
+    });
+
+    const requestPromise = apiFetch("/health");
+    const assertion = expect(requestPromise).rejects.toMatchObject({
+      message: "Tempo de requisição excedido.",
+      status: 0,
+    });
+
+    await vi.advanceTimersByTimeAsync(16000);
+    await assertion;
+  });
+
+  it("normalizes common API errors for UI", () => {
+    expect(normalizeApiError({ status: 401, message: "x" })).toBe("Sessão expirada. Faça login novamente.");
+    expect(normalizeApiError({ status: 403, message: "x" })).toBe("Você não tem permissão para esta operação.");
+    expect(normalizeApiError({ status: 0, message: "Falha de conexão com o servidor." })).toBe("Falha de conexão com o servidor.");
+    expect(normalizeApiError({ status: 500, message: "Erro interno." })).toBe("Erro interno.");
+  });
+
 });
