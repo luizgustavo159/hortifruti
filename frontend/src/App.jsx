@@ -12,6 +12,7 @@ import { Caixa } from "./pages/Caixa";
 import { Descontos } from "./pages/Descontos";
 import { Estoque } from "./pages/Estoque";
 import { Login } from "./pages/Login";
+import { AcessoNegado } from "./pages/AcessoNegado";
 import { apiFetch } from "./lib/api";
 import {
   clearToken,
@@ -29,7 +30,7 @@ function ProtectedRoute({ children, requiredRole }) {
 
 
   if (requiredRole && !hasRequiredRole(requiredRole)) {
-    return <Navigate to="/caixa" replace />;
+    return <Navigate to="/acesso-negado" replace />;
   }
 
   return children;
@@ -99,6 +100,8 @@ export default function App() {
           path="/"
           element={isAuthenticated() ? <Navigate to="/caixa" replace /> : <Login />}
         />
+
+        <Route path="/acesso-negado" element={<AcessoNegado />} />
 
         <Route
           path="/caixa"

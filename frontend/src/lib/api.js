@@ -3,6 +3,14 @@ import { clearToken, clearUser, getToken } from "./auth";
 const API_BASE = "/api";
 const API_TIMEOUT_MS = 15000;
 
+export function normalizeApiError(error) {
+  if (!error) return "Erro inesperado.";
+  if (error.status === 401) return "Sessão expirada. Faça login novamente.";
+  if (error.status === 403) return "Você não tem permissão para esta operação.";
+  if (error.status === 0) return error.message || "Falha de conexão com o servidor.";
+  return error.message || "Erro na requisição.";
+}
+
 const emitUnauthorizedEvent = () => {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("greenstore:unauthorized"));

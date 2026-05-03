@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { apiFetch } from "./api";
+import { apiFetch, normalizeApiError } from "./api";
 import { clearToken, getToken, getUser, setToken, setUser } from "./auth";
 
 describe("apiFetch", () => {
@@ -155,6 +155,13 @@ describe("apiFetch", () => {
 
     await vi.advanceTimersByTimeAsync(16000);
     await assertion;
+  });
+
+  it("normalizes common API errors for UI", () => {
+    expect(normalizeApiError({ status: 401, message: "x" })).toBe("Sessão expirada. Faça login novamente.");
+    expect(normalizeApiError({ status: 403, message: "x" })).toBe("Você não tem permissão para esta operação.");
+    expect(normalizeApiError({ status: 0, message: "Falha de conexão com o servidor." })).toBe("Falha de conexão com o servidor.");
+    expect(normalizeApiError({ status: 500, message: "Erro interno." })).toBe("Erro interno.");
   });
 
 });

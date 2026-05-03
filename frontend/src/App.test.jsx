@@ -12,6 +12,7 @@ vi.mock("./pages/AdminPoliticas", () => ({ AdminPoliticas: () => <div>admin-poli
 vi.mock("./pages/AdminRelatorios", () => ({ AdminRelatorios: () => <div>admin-relatorios-page</div> }));
 vi.mock("./pages/AdminFuncionarios", () => ({ AdminFuncionarios: () => <div>admin-funcionarios-page</div> }));
 vi.mock("./pages/AdminConfiguracao", () => ({ AdminConfiguracao: () => <div>admin-configuracao-page</div> }));
+vi.mock("./pages/AcessoNegado", () => ({ AcessoNegado: () => <div>acesso-negado-page</div> }));
 
 const mockApiFetch = vi.fn();
 vi.mock("./lib/api", () => ({
@@ -72,15 +73,14 @@ describe("App session bootstrap", () => {
     expect(setUserMock).toHaveBeenCalledWith({ id: 1, role: "admin" });
   });
 
-  it("redirects to /caixa when role is insufficient for protected route", async () => {
+  it("redirects to access denied when role is insufficient for protected route", async () => {
     window.history.pushState({}, "", "/admin");
     authState.isAuthenticated = true;
     authState.user = { id: 1, role: "operator" };
     authState.hasRequiredRole = false;
 
     render(<App />);
-    const pages = await screen.findAllByText("caixa-page");
-    expect(pages.length).toBeGreaterThan(0);
+    expect(await screen.findByText("acesso-negado-page")).toBeTruthy();
   });
   it("redirects unknown routes to login when unauthenticated", async () => {
     window.history.pushState({}, "", "/rota-inexistente");
