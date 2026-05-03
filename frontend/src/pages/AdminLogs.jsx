@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { PageShell } from "../components/PageShell";
 import { apiFetch } from "../lib/api";
+import { normalizeApiError } from "../lib/api";
 import "./AdminLogs.css";
 
 export function AdminLogs() {
@@ -50,7 +51,7 @@ export function AdminLogs() {
         const data = await apiFetch(`/api/logs?${params}`);
         setLogs(data || []);
       } catch (loadError) {
-        setError(loadError.message || "Falha ao carregar logs.");
+        setError(normalizeApiError(loadError));
       } finally {
         setLoading(false);
       }

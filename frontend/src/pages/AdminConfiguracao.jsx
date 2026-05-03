@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { PageShell } from "../components/PageShell";
 import { apiFetch } from "../lib/api";
+import { normalizeApiError } from "../lib/api";
 import "./AdminConfiguracao.css";
 
 export function AdminConfiguracao() {
@@ -57,7 +58,7 @@ export function AdminConfiguracao() {
       setSuccessMessage("Configurações salvas com sucesso!");
       setTimeout(() => setSuccessMessage(""), 3000);
     } catch (saveError) {
-      setError(saveError.message || "Erro ao salvar configurações.");
+      setError(normalizeApiError(saveError));
     } finally {
       setLoading(false);
     }

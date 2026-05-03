@@ -523,3 +523,21 @@ a {
     font-size: 32px;
   }
 }
+
+
+body.theme-dark {
+  --color-dark: #f3f4f6;
+  --color-dark-light: #e5e7eb;
+  --color-gray: #9ca3af;
+  --color-gray-light: #374151;
+  --color-gray-lighter: #111827;
+  --color-white: #1f2937;
+}
+
+body.theme-dark .sidebar {
+  background: linear-gradient(135deg, #030712 0%, #111827 100%);
+}
+
+body.theme-dark .table tbody tr:hover {
+  background: #111827;
+}

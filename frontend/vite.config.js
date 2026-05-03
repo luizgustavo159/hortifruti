@@ -10,4 +10,7 @@ export default defineConfig({
     outDir: "../public",
     emptyOutDir: true,
   },
+  test: {
+    exclude: ["e2e/**", "node_modules/**"],
+  },
 });

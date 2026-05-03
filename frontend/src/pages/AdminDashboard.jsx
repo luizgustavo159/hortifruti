@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { PageShell } from "../components/PageShell";
 import { apiFetch } from "../lib/api";
+import { normalizeApiError } from "../lib/api";
 import "./AdminDashboard.css";
 
 export function AdminDashboard() {
@@ -45,7 +46,7 @@ export function AdminDashboard() {
           by_category: categoryData || [],
         });
       } catch (loadError) {
-        setError(loadError.message || "Falha ao carregar relatórios.");
+        setError(normalizeApiError(loadError));
       } finally {
         setLoading(false);
       }
