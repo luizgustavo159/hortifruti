@@ -1,0 +1,288 @@
+.caixa-fechamento-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+/* ============ RESUMO ============ */
+.resumo-section {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 16px;
+}
+
+.resumo-card {
+  background: white;
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 20px;
+  text-align: center;
+  transition: all 0.3s ease;
+}
+
+.resumo-card h3 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+.resumo-card .valor {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 800;
+  color: #10b981;
+}
+
+.resumo-card .valor-input {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 24px;
+  font-weight: 700;
+  text-align: center;
+  color: #1f2937;
+}
+
+.resumo-card .valor-input:focus {
+  outline: none;
+  border-color: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+}
+
+.resumo-card.balanced {
+  background: #ecfdf5;
+  border-color: #10b981;
+}
+
+.resumo-card.surplus {
+  background: #fef3c7;
+  border-color: #f59e0b;
+}
+
+.resumo-card.surplus .valor {
+  color: #f59e0b;
+}
+
+.resumo-card.deficit {
+  background: #fee2e2;
+  border-color: #ef4444;
+}
+
+.resumo-card.deficit .valor {
+  color: #ef4444;
+}
+
+.resumo-card .status {
+  margin: 8px 0 0 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: inherit;
+}
+
+/* ============ MOVIMENTOS ============ */
+.movimentos-section {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  border: 1px solid #e5e7eb;
+}
+
+.movimentos-section h3 {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.movimento-buttons {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.btn-movimento {
+  flex: 1;
+  padding: 12px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-sangria {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  color: white;
+}
+
+.btn-sangria:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+}
+
+.btn-suprimento {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+}
+
+.btn-suprimento:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.movimentos-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.movimento-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: #f9fafb;
+  border-radius: 8px;
+  border-left: 4px solid #e5e7eb;
+}
+
+.movimento-item.withdrawal {
+  border-left-color: #ef4444;
+  background: #fef2f2;
+}
+
+.movimento-item.deposit {
+  border-left-color: #10b981;
+  background: #f0fdf4;
+}
+
+.movimento-item .tipo {
+  font-weight: 700;
+  color: #1f2937;
+  flex: 1;
+}
+
+.movimento-item .valor {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f2937;
+  min-width: 100px;
+  text-align: right;
+}
+
+.movimento-item .hora {
+  font-size: 12px;
+  color: #9ca3af;
+  margin-left: 12px;
+}
+
+/* ============ NOTAS ============ */
+.notas-section {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  border: 1px solid #e5e7eb;
+}
+
+.notas-section label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.notas-section textarea {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.notas-section textarea:focus {
+  outline: none;
+  border-color: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+}
+
+/* ============ AÇÕES ============ */
+.actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.btn-fechar {
+  padding: 14px 32px;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.btn-fechar:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(16, 185, 129, 0.4);
+}
+
+.btn-fechar:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-cancelar {
+  padding: 14px 32px;
+  background: #f3f4f6;
+  color: #1f2937;
+  border: 2px solid #e5e7eb;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-cancelar:hover {
+  background: #e5e7eb;
+}
+
+/* ============ RESPONSIVIDADE ============ */
+@media (max-width: 768px) {
+  .caixa-fechamento-container {
+    gap: 16px;
+  }
+
+  .resumo-section {
+    grid-template-columns: 1fr;
+  }
+
+  .movimento-buttons {
+    flex-direction: column;
+  }
+
+  .actions {
+    flex-direction: column;
+  }
+
+  .btn-fechar,
+  .btn-cancelar {
+    width: 100%;
+  }
+}
