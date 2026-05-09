@@ -1,0 +1,270 @@
+.cupom-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+}
+
+.cupom-fiscal {
+  width: 400px;
+  max-width: 100%;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #1f2937;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* ============ HEADER ============ */
+.cupom-header {
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.cupom-header h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.cupom-header .cnpj {
+  margin: 4px 0;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.cupom-header .endereco {
+  margin: 4px 0;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.cupom-header .contato {
+  margin: 4px 0;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+/* ============ SEPARADORES ============ */
+.cupom-separator {
+  text-align: center;
+  margin: 8px 0;
+  color: #d1d5db;
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+
+.cupom-separator-light {
+  text-align: center;
+  margin: 4px 0;
+  color: #e5e7eb;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+/* ============ INFORMAÇÕES ============ */
+.cupom-info {
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+
+.cupom-info p {
+  margin: 4px 0;
+  display: flex;
+  justify-content: space-between;
+}
+
+.cupom-info span:first-child {
+  font-weight: 700;
+}
+
+/* ============ ITENS ============ */
+.cupom-items {
+  margin-bottom: 8px;
+}
+
+.cupom-item-header {
+  display: grid;
+  grid-template-columns: 2fr 0.5fr 1fr 1fr;
+  gap: 4px;
+  font-weight: 700;
+  font-size: 10px;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.cupom-item {
+  margin-bottom: 8px;
+}
+
+.item-row {
+  display: grid;
+  grid-template-columns: 2fr 0.5fr 1fr 1fr;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.item-desc {
+  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.item-qty {
+  text-align: center;
+}
+
+.item-price {
+  text-align: right;
+}
+
+.item-total {
+  text-align: right;
+  font-weight: 700;
+}
+
+.item-discount {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #10b981;
+  margin-top: 2px;
+  padding-left: 4px;
+}
+
+/* ============ TOTAIS ============ */
+.cupom-totals {
+  margin-bottom: 8px;
+}
+
+.cupom-total-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  margin: 4px 0;
+}
+
+.cupom-total-row.discount {
+  color: #10b981;
+}
+
+.cupom-total-row.final {
+  font-weight: 800;
+  font-size: 13px;
+  border-top: 2px solid #1f2937;
+  border-bottom: 2px solid #1f2937;
+  padding: 6px 0;
+  margin: 8px 0;
+}
+
+/* ============ PAGAMENTO ============ */
+.cupom-payment {
+  text-align: center;
+  margin-bottom: 8px;
+  padding: 8px 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+}
+
+.cupom-payment p {
+  margin: 4px 0;
+  font-size: 11px;
+}
+
+.payment-method {
+  font-weight: 700;
+  color: #10b981;
+}
+
+/* ============ RODAPÉ ============ */
+.cupom-footer {
+  text-align: center;
+  margin-top: 8px;
+}
+
+.cupom-footer p {
+  margin: 4px 0;
+  font-size: 11px;
+}
+
+.cupom-number {
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.cupom-time {
+  font-size: 10px;
+  color: #6b7280;
+}
+
+.cupom-message {
+  font-style: italic;
+  color: #10b981;
+  margin-top: 8px;
+}
+
+/* ============ BOTÃO DE IMPRESSÃO ============ */
+.btn-print {
+  padding: 12px 24px;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.btn-print:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+}
+
+.btn-print:active {
+  transform: translateY(0);
+}
+
+/* ============ PRINT STYLES ============ */
+@media print {
+  .btn-print {
+    display: none;
+  }
+
+  .cupom-fiscal {
+    width: 80mm;
+    box-shadow: none;
+    border: none;
+    padding: 8px;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+  }
+}
+
+/* ============ RESPONSIVIDADE ============ */
+@media (max-width: 480px) {
+  .cupom-fiscal {
+    width: 100%;
+    font-size: 11px;
+  }
+
+  .cupom-item-header,
+  .item-row {
+    grid-template-columns: 1.5fr 0.5fr 1fr;
+  }
+
+  .item-price {
+    display: none;
+  }
+}
