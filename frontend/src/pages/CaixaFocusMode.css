@@ -365,3 +365,21 @@
     font-size: 18px;
   }
 }
+
+
+.focus-error {
+  background: #fee2e2;
+  color: #991b1b;
+  padding: 12px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.no-products {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 24px;
+  font-size: 16px;
+}

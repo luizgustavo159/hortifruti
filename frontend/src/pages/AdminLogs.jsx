@@ -48,9 +48,11 @@ export function AdminLogs() {
         if (filterLevel !== "all") params.append("level", filterLevel);
 
         const data = await apiFetch(`/api/logs?${params}`);
-        setLogs(data || []);
+        setLogs(Array.isArray(data) ? data : []);
       } catch (loadError) {
+        console.error("Erro ao carregar logs:", loadError);
         setError(loadError.message || "Falha ao carregar logs.");
+        setLogs([]);
       } finally {
         setLoading(false);
       }
@@ -208,7 +210,9 @@ export function AdminLogs() {
                   {logs.map((log, idx) => (
                     <tr key={idx}>
                       <td className="date-cell">
-                        {new Date(log.created_at).toLocaleString("pt-BR")}
+                        {log.created_at
+                          ? new Date(log.created_at).toLocaleString("pt-BR")
+                          : "-"}
                       </td>
                       <td className="type-cell">{log.type || "-"}</td>
                       <td className="level-cell">
