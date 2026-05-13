@@ -1,14 +1,19 @@
 const fs = require("fs");
 const path = require("path");
-const { Pool } = require("pg");
-
-const DATABASE_URL = process.env.DATABASE_URL || "postgres://localhost:5432/greenstore";
+const db = require("../db");
 const MIGRATIONS_DIR = path.join(__dirname, "..", "migrations");
 
-const pool = new Pool({ connectionString: DATABASE_URL });
+const query = (sql, params = []) => {
+  return new Promise((resolve, reject) => {
+    db.pool.query(sql, params, (err, result) => {
+      if (err) reject(err);
+      else resolve(result);
+    });
+  });
+};
 
 const run = async () => {
-  await pool.query(
+  await query(
     `CREATE TABLE IF NOT EXISTS schema_migrations (
       id SERIAL PRIMARY KEY,
       filename TEXT NOT NULL UNIQUE,
@@ -23,7 +28,7 @@ const run = async () => {
 
   for (const file of files) {
     // eslint-disable-next-line no-await-in-loop
-    const { rows } = await pool.query(
+    const { rows } = await query(
       "SELECT 1 FROM schema_migrations WHERE filename = $1",
       [file]
     );
@@ -32,19 +37,20 @@ const run = async () => {
       continue;
     }
     const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, file), "utf-8");
-    // eslint-disable-next-line no-await-in-loop
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      await client.query(sql);
-      await client.query("INSERT INTO schema_migrations (filename) VALUES ($1)", [file]);
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    
+    await new Promise((resolve, reject) => {
+      db.withTransaction((tx, done) => {
+        tx.exec(sql, (err) => {
+          if (err) return done(err);
+          tx.run("INSERT INTO schema_migrations (filename) VALUES ($1)", [file], (insertErr) => {
+            done(insertErr);
+          });
+        });
+      }, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
   }
 };
 
@@ -52,11 +58,9 @@ run()
   .then(() => {
     // eslint-disable-next-line no-console
     console.log("Migrations applied successfully.");
-    return pool.end();
   })
   .catch((error) => {
     // eslint-disable-next-line no-console
     console.error("Migration failed:", error);
     process.exitCode = 1;
-    return pool.end();
   });

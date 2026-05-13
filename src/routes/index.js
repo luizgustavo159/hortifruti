@@ -9,6 +9,12 @@ const {
   sendAlertNotification,
   sendPasswordResetNotification,
 } = require("../services/notifications");
+const { 
+  generateAccessToken, 
+  generateRefreshToken, 
+  refreshTokenMiddleware,
+  logoutMiddleware 
+} = require("../middleware/tokenManagement");
 
 const router = express.Router();
 
@@ -340,23 +346,8 @@ router.post(
   }
 );
 
-router.post("/api/auth/logout", authenticateToken, (req, res) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader ? authHeader.replace("Bearer ", "") : null;
-  if (!token) {
-    return res.status(400).json({ message: "Token não informado." });
-  }
-  db.run(
-    "UPDATE sessions SET revoked_at = CURRENT_TIMESTAMP WHERE token = ?",
-    [token],
-    (err) => {
-      if (err) {
-        return res.status(500).json({ message: "Erro ao encerrar sessão." });
-      }
-      return res.json({ status: "ok" });
-    }
-  );
-});
+router.post("/api/auth/logout", authenticateToken, logoutMiddleware);
+router.post("/api/auth/refresh", refreshTokenMiddleware);
 
 router.post(
   "/api/auth/request-password-reset",
@@ -538,21 +529,28 @@ router.post(
         });
       }
 
-      const token = jwt.sign(
-        { id: user.id, name: user.name, email: user.email, role: user.role },
-        JWT_SECRET,
-        { expiresIn: "8h" }
-      );
+      const accessToken = generateAccessToken(user.id, user.email, user.role);
+      const refreshToken = generateRefreshToken(user.id, user.email, user.role);
+
       db.run("DELETE FROM login_attempts WHERE email = ?", [email]);
       db.run("UPDATE users SET locked_until = NULL WHERE email = ?", [email]);
       db.run(
         "INSERT INTO sessions (user_id, token) VALUES (?, ?)",
-        [user.id, token],
+        [user.id, accessToken],
         (sessionErr) => {
           if (sessionErr) {
             return res.status(500).json({ message: "Erro ao criar sessão." });
           }
-          return res.json({ token });
+          return res.json({
+            accessToken,
+            refreshToken,
+            user: {
+              id: user.id,
+              name: user.name,
+              email: user.email,
+              role: user.role,
+            },
+          });
         }
       );
     });
@@ -2672,5 +2670,4 @@ module.exports = {
   sendAlertNotification,
   ALERT_SLOW_THRESHOLD_MS,
   METRICS_ENABLED,
-  authenticateToken,
 };

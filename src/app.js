@@ -14,6 +14,7 @@ const {
   ALERT_SLOW_THRESHOLD_MS,
   METRICS_ENABLED,
 } = require("./routes");
+const { checkBlacklist } = require("./middleware/tokenManagement");
 
 const app = express();
 const requestMetrics = {
@@ -100,6 +101,7 @@ const limiter = rateLimit({
 });
 
 app.use("/api", limiter);
+app.use(checkBlacklist);
 app.use(router);
 app.use("/api", (req, res) => {
   res.status(404).json({ message: "Rota de API não encontrada." });

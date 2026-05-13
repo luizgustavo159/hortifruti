@@ -1,4 +1,4 @@
-import jwt from 'jsonwebtoken';
+const jwt = require("jsonwebtoken");
 
 // Blacklist simples em memória (em produção, usar Redis)
 const tokenBlacklist = new Set();
@@ -6,7 +6,7 @@ const tokenBlacklist = new Set();
 /**
  * Adicionar token à blacklist (logout)
  */
-export const addToBlacklist = (token) => {
+const addToBlacklist = (token) => {
   tokenBlacklist.add(token);
   
   // Limpar token expirado da blacklist após 24h
@@ -24,14 +24,14 @@ export const addToBlacklist = (token) => {
 /**
  * Verificar se token está na blacklist
  */
-export const isTokenBlacklisted = (token) => {
+const isTokenBlacklisted = (token) => {
   return tokenBlacklist.has(token);
 };
 
 /**
  * Middleware para verificar blacklist
  */
-export const checkBlacklist = (req, res, next) => {
+const checkBlacklist = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   
   if (token && isTokenBlacklisted(token)) {
@@ -46,29 +46,29 @@ export const checkBlacklist = (req, res, next) => {
 /**
  * Gerar refresh token
  */
-export const generateRefreshToken = (userId, email, role) => {
+const generateRefreshToken = (userId, email, role) => {
   return jwt.sign(
-    { id: userId, email, role, type: 'refresh' },
-    process.env.JWT_REFRESH_SECRET || 'refresh-secret',
-    { expiresIn: process.env.JWT_REFRESH_EXPIRY || '7d' }
+    { id: userId, email, role, type: "refresh" },
+    process.env.JWT_REFRESH_SECRET || "refresh-secret",
+    { expiresIn: process.env.JWT_REFRESH_EXPIRY || "7d" }
   );
 };
 
 /**
  * Gerar access token
  */
-export const generateAccessToken = (userId, email, role) => {
+const generateAccessToken = (userId, email, role) => {
   return jwt.sign(
-    { id: userId, email, role, type: 'access' },
-    process.env.JWT_SECRET || 'secret',
-    { expiresIn: process.env.JWT_EXPIRY || '1h' }
+    { id: userId, email, role, type: "access" },
+    process.env.JWT_SECRET || "secret",
+    { expiresIn: process.env.JWT_EXPIRY || "1h" }
   );
 };
 
 /**
  * Verificar e renovar refresh token
  */
-export const verifyRefreshToken = (refreshToken) => {
+const verifyRefreshToken = (refreshToken) => {
   try {
     const decoded = jwt.verify(
       refreshToken,
@@ -88,7 +88,7 @@ export const verifyRefreshToken = (refreshToken) => {
 /**
  * Middleware para renovar token automaticamente
  */
-export const refreshTokenMiddleware = (req, res, next) => {
+const refreshTokenMiddleware = (req, res, next) => {
   const refreshToken = req.body.refreshToken || req.cookies.refreshToken;
   
   if (!refreshToken) {
@@ -117,12 +117,23 @@ export const refreshTokenMiddleware = (req, res, next) => {
 /**
  * Logout - adicionar token à blacklist
  */
-export const logoutMiddleware = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  
+const logoutMiddleware = (req, res, next) => {
+  const token = req.headers.authorization?.split(" ")[1];
+
   if (token) {
     addToBlacklist(token);
   }
-  
-  res.json({ message: 'Logged out successfully' });
+
+  res.json({ message: "Logged out successfully" });
+};
+
+module.exports = {
+  addToBlacklist,
+  isTokenBlacklisted,
+  checkBlacklist,
+  generateRefreshToken,
+  generateAccessToken,
+  verifyRefreshToken,
+  refreshTokenMiddleware,
+  logoutMiddleware,
 };

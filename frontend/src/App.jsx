@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 import "./animations.css";
 import { Login } from "./pages/Login";
 import { Caixa } from "./pages/Caixa";
@@ -15,45 +16,17 @@ import { AdminFuncionarios } from "./pages/AdminFuncionarios";
 import { AdminConfiguracao } from "./pages/AdminConfiguracao";
 import { apiFetch } from "./lib/api";
 import { clearToken, clearUser, getUser, hasRequiredRole, isAuthenticated, setUser } from "./lib/auth";
+import ProtectedRoute from "./components/ProtectedRoute";
 
-function ProtectedRoute({ children, requiredRole }) {
-  // Modo demonstração: Permitir acesso total
-  return children;
-}
+function AppRoutes() {
+  const { isAuthenticated, loading } = useAuth();
 
-export default function App() {
-  const [sessionReady, setSessionReady] = useState(false);
-
-  useEffect(() => {
-    const bootstrapSession = async () => {
-      if (!isAuthenticated()) {
-        setSessionReady(true);
-        return;
-      }
-      if (getUser()) {
-        setSessionReady(true);
-        return;
-      }
-      try {
-        const profile = await apiFetch("/auth/me");
-        setUser(profile);
-      } catch (_error) {
-        clearToken();
-        clearUser();
-      } finally {
-        setSessionReady(true);
-      }
-    };
-    bootstrapSession();
-  }, []);
-
-  if (!sessionReady) {
+  if (loading) {
     return <div style={{ padding: "24px" }}>Carregando sessão...</div>;
   }
 
   return (
-    <BrowserRouter>
-      <Routes>
+    <Routes>
         <Route
           path="/"
           element={isAuthenticated() ? <Navigate to="/caixa" replace /> : <Login />}
@@ -139,14 +112,6 @@ export default function App() {
           }
         />
         <Route
-          path="/admin/logs"
-          element={
-            <ProtectedRoute requiredRole="admin">
-              <AdminLogs />
-            </ProtectedRoute>
-          }
-        />
-        <Route
           path="/admin/configuracao"
           element={
             <ProtectedRoute requiredRole="admin">
@@ -155,6 +120,15 @@ export default function App() {
           }
         />
       </Routes>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <AppRoutes />
+      </AuthProvider>
     </BrowserRouter>
   );
 }
