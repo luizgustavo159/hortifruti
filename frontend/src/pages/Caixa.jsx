@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { PageShell } from "../components/PageShell";
 import { apiFetch } from "../lib/api";
+import { ApprovalModal } from "../components/ApprovalModal";
 import "./Caixa.css";
 
 export function Caixa() {
@@ -17,12 +18,28 @@ export function Caixa() {
   const [selectedDiscount, setSelectedDiscount] = useState(null);
   const [discounts, setDiscounts] = useState([]);
 
-  // Carregar produtos e descontos ao montar o componente
+  // Estado do Caixa
+  const [caixaAberto, setCaixaAberto] = useState(false);
+  const [showAberturaModal, setShowAberturaModal] = useState(false);
+  const [showApprovalModal, setShowApprovalModal] = useState(false);
+  const [openingAmount, setOpeningAmount] = useState("");
+  const [openingNotes, setOpeningNotes] = useState("");
+
+  // Carregar produtos, descontos e status do caixa ao montar o componente
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
       setError("");
       try {
+        // Verificar se há caixa aberto
+        const currentCaixa = await apiFetch("/pos/cash-session/current");
+        if (currentCaixa) {
+          setCaixaAberto(true);
+        } else {
+          setCaixaAberto(false);
+          setShowAberturaModal(true);
+        }
+
         const promises = [apiFetch("/products")];
         
         // Apenas gerentes e acima podem ver descontos
@@ -132,6 +149,39 @@ export function Caixa() {
   const totalDiscount = calculateTotalDiscount();
   const finalTotal = total - totalDiscount;
 
+  // Lógica de Abertura de Caixa
+  const handleOpenCaixaRequest = (e) => {
+    e.preventDefault();
+    if (!openingAmount || isNaN(openingAmount)) {
+      setError("Informe um valor de abertura válido.");
+      return;
+    }
+    setShowApprovalModal(true);
+  };
+
+  const handleAberturaAprovada = async (token) => {
+    try {
+      setLoading(true);
+      await apiFetch("/pos/cash-session/open", {
+        method: "POST",
+        body: JSON.stringify({
+          opening_amount: parseFloat(openingAmount),
+          notes: openingNotes,
+          approval_token: token
+        })
+      });
+      setCaixaAberto(true);
+      setShowAberturaModal(false);
+      setShowApprovalModal(false);
+      setSuccessMessage("Caixa aberto com sucesso!");
+      setTimeout(() => setSuccessMessage(""), 3000);
+    } catch (err) {
+      setError(err.message || "Erro ao abrir caixa.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Finalizar venda
   const handleCheckout = async () => {
     if (cartItems.length === 0) {
@@ -183,15 +233,69 @@ export function Caixa() {
       title="Frente de Caixa"
       subtitle="Ponto de Venda - Registre vendas em tempo real"
       actions={
-        <button 
-          className="btn-focus-mode" 
-          onClick={() => navigate('/caixa/focus')}
-          title="Modo Foco - Tela Cheia"
-        >
-          🎯 Modo Foco
-        </button>
+        <div className="pos-actions">
+          <button 
+            className="btn-movimentacao" 
+            onClick={() => navigate('/caixa/fechamento')}
+          >
+            💰 Movimentações / Fechar
+          </button>
+          <button 
+            className="btn-focus-mode" 
+            onClick={() => navigate('/caixa/focus')}
+            title="Modo Foco - Tela Cheia"
+          >
+            🎯 Modo Foco
+          </button>
+        </div>
       }
     >
+      {/* Modal de Abertura de Caixa */}
+      {showAberturaModal && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h3>Abertura de Caixa</h3>
+            <p>Informe o valor inicial em dinheiro para começar as operações.</p>
+            <form onSubmit={handleOpenCaixaRequest}>
+              <div className="form-group">
+                <label>Valor de Abertura (R$)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={openingAmount}
+                  onChange={(e) => setOpeningAmount(e.target.value)}
+                  placeholder="0,00"
+                  required
+                  autoFocus
+                />
+              </div>
+              <div className="form-group">
+                <label>Observações (Opcional)</label>
+                <textarea
+                  value={openingNotes}
+                  onChange={(e) => setOpeningNotes(e.target.value)}
+                  placeholder="Ex: Fundo de caixa inicial"
+                />
+              </div>
+              <button type="submit" className="btn-finalize" style={{ width: '100%' }}>
+                Solicitar Abertura
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Aprovação do Superior */}
+      {showApprovalModal && (
+        <ApprovalModal
+          action="open_cash_session"
+          title="Autorização de Abertura"
+          message={`O operador está solicitando a abertura do caixa com R$ ${parseFloat(openingAmount).toFixed(2)}. Um gerente deve autorizar.`}
+          onApproved={handleAberturaAprovada}
+          onCancel={() => setShowApprovalModal(false)}
+        />
+      )}
+
       <div className="pos-container">
         {/* Seção de Produtos */}
         <div className="pos-products">

@@ -2020,7 +2020,7 @@ router.post(
     body("email").isEmail().withMessage("Email inválido."),
     body("password").notEmpty().withMessage("Senha é obrigatória."),
     body("action")
-      .isIn(["remove_item", "discount_override", "cancel_sale", "user_update", "stock_loss", "stock_adjust"])
+      .isIn(["remove_item", "discount_override", "cancel_sale", "user_update", "stock_loss", "stock_adjust", "open_cash_session", "cash_withdrawal"])
       .withMessage("Ação inválida."),
   ],
   (req, res) => {
@@ -2257,6 +2257,7 @@ router.post(
   [
     body("opening_amount").isFloat({ min: 0 }).withMessage("Valor de abertura inválido."),
     body("notes").optional().isString().withMessage("Observação inválida."),
+    body("approval_token").notEmpty().withMessage("Aprovação de superior é obrigatória para abrir o caixa."),
   ],
   (req, res) => {
     const errors = validationResult(req);
@@ -2264,36 +2265,50 @@ router.post(
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { opening_amount, notes = "" } = req.body;
-    db.get(
-      "SELECT id FROM cash_sessions WHERE operator_id = ? AND closed_at IS NULL LIMIT 1",
-      [req.user.id],
-      (lookupErr, existing) => {
-        if (lookupErr) {
-          return res.status(500).json({ message: "Erro ao abrir caixa." });
-        }
-        if (existing) {
-          return res.status(409).json({ message: "Já existe um caixa aberto para este operador." });
-        }
+    const { opening_amount, notes = "", approval_token } = req.body;
 
-        return db.get(
-          `INSERT INTO cash_sessions (operator_id, opening_amount, notes)
-           VALUES (?, ?, ?) RETURNING id, operator_id, opening_amount, opened_at, notes`,
-          [req.user.id, opening_amount, notes],
-          (insertErr, session) => {
-            if (insertErr) {
-              return res.status(500).json({ message: "Erro ao abrir caixa." });
-            }
-            logAudit({
-              action: "cash_session_opened",
-              details: { session_id: session.id, opening_amount: Number(opening_amount), notes },
-              performedBy: req.user.id,
-            });
-            return res.status(201).json(session);
-          }
-        );
+    // Verificar aprovação do superior
+    verifyApprovalToken(approval_token, "open_cash_session", (err, approval) => {
+      if (err) {
+        return res.status(err.status || 401).json({ message: err.message || "Aprovação inválida." });
       }
-    );
+
+      db.get(
+        "SELECT id FROM cash_sessions WHERE operator_id = ? AND closed_at IS NULL LIMIT 1",
+        [req.user.id],
+        (lookupErr, existing) => {
+          if (lookupErr) {
+            return res.status(500).json({ message: "Erro ao abrir caixa." });
+          }
+          if (existing) {
+            return res.status(409).json({ message: "Já existe um caixa aberto para este operador." });
+          }
+
+          return db.get(
+            `INSERT INTO cash_sessions (operator_id, opening_amount, notes, approved_by, approval_token)
+             VALUES (?, ?, ?, ?, ?) RETURNING id, operator_id, opening_amount, opened_at, notes`,
+            [req.user.id, opening_amount, notes, approval.approved_by, approval_token],
+            (insertErr, session) => {
+              if (insertErr) {
+                return res.status(500).json({ message: "Erro ao abrir caixa." });
+              }
+              logAudit({
+                action: "cash_session_opened",
+                details: { 
+                  session_id: session.id, 
+                  opening_amount: Number(opening_amount), 
+                  notes,
+                  approved_by: approval.approved_by 
+                },
+                performedBy: req.user.id,
+                approvedBy: approval.approved_by
+              });
+              return res.status(201).json(session);
+            }
+          );
+        }
+      );
+    });
   }
 );
 
@@ -2316,13 +2331,13 @@ router.get("/api/pos/cash-session/movement", authenticateToken, (req, res) => {
 router.post(
   "/api/pos/cash-session/movement",
   authenticateToken,
-  requireSupervisor,
   [
     body("type").isIn(["withdrawal", "supply", "deposit"]).withMessage("Tipo de movimentação inválido."),
     body("amount").isFloat({ gt: 0 }).withMessage("Valor inválido."),
     body("reason").optional().trim().isString().withMessage("Motivo inválido."),
     body("description").optional().trim().isString().withMessage("Descrição inválida."),
     body("session_id").optional().isInt({ min: 1 }).withMessage("Sessão inválida."),
+    body("approval_token").optional().isString().withMessage("Token de aprovação inválido."),
   ],
   (req, res) => {
     const errors = validationResult(req);
@@ -2330,41 +2345,65 @@ router.post(
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { type, amount, reason, description, session_id } = req.body;
+    const { type, amount, reason, description, session_id, approval_token } = req.body;
     const finalReason = reason || description || "Movimentação manual";
     let finalType = type;
     if (type === "deposit") finalType = "supply";
 
-    const loadSql = session_id
-      ? "SELECT * FROM cash_sessions WHERE id = ? AND closed_at IS NULL"
-      : "SELECT * FROM cash_sessions WHERE operator_id = ? AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1";
-    const params = session_id ? [session_id] : [req.user.id];
+    // Sangrias (withdrawal) exigem aprovação de superior
+    const needsApproval = finalType === "withdrawal";
 
-    db.get(loadSql, params, (sessionErr, session) => {
-      if (sessionErr) {
-        return res.status(500).json({ message: "Erro ao registrar movimentação de caixa." });
-      }
-      if (!session) {
-        return res.status(404).json({ message: "Sessão de caixa aberta não encontrada." });
-      }
+    const finalizeMovement = (approval = null) => {
+      const loadSql = session_id
+        ? "SELECT * FROM cash_sessions WHERE id = ? AND closed_at IS NULL"
+        : "SELECT * FROM cash_sessions WHERE operator_id = ? AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1";
+      const params = session_id ? [session_id] : [req.user.id];
 
-      return db.get(
-        `INSERT INTO cash_movements (session_id, type, amount, reason, performed_by)
-         VALUES (?, ?, ?, ?, ?) RETURNING id, session_id, type, amount, reason, performed_by, created_at`,
-        [session.id, finalType, amount, finalReason, req.user.id],
-        (insertErr, movement) => {
-          if (insertErr) {
-            return res.status(500).json({ message: "Erro ao registrar movimentação de caixa." });
-          }
-          logAudit({
-            action: "cash_session_movement",
-            details: { session_id: session.id, type: finalType, amount: Number(amount), reason: finalReason },
-            performedBy: req.user.id,
-          });
-          return res.status(201).json(movement);
+      db.get(loadSql, params, (sessionErr, session) => {
+        if (sessionErr) {
+          return res.status(500).json({ message: "Erro ao registrar movimentação de caixa." });
         }
-      );
-    });
+        if (!session) {
+          return res.status(404).json({ message: "Sessão de caixa aberta não encontrada." });
+        }
+
+        return db.get(
+          `INSERT INTO cash_movements (session_id, type, amount, reason, performed_by)
+           VALUES (?, ?, ?, ?, ?) RETURNING id, session_id, type, amount, reason, performed_by, created_at`,
+          [session.id, finalType, amount, finalReason, req.user.id],
+          (insertErr, movement) => {
+            if (insertErr) {
+              return res.status(500).json({ message: "Erro ao registrar movimentação de caixa." });
+            }
+            logAudit({
+              action: "cash_session_movement",
+              details: { 
+                session_id: session.id, 
+                type: finalType, 
+                amount: Number(amount), 
+                reason: finalReason,
+                approved_by: approval?.approved_by
+              },
+              performedBy: req.user.id,
+              approvedBy: approval?.approved_by
+            });
+            return res.status(201).json(movement);
+          }
+        );
+      });
+    };
+
+    if (needsApproval) {
+      if (!approval_token) {
+        return res.status(403).json({ message: "Sangria requer aprovação de um superior." });
+      }
+      return verifyApprovalToken(approval_token, "cash_withdrawal", (err, approval) => {
+        if (err) return res.status(err.status || 401).json({ message: err.message });
+        return finalizeMovement(approval);
+      });
+    }
+
+    return finalizeMovement();
   }
 );
 

@@ -612,6 +612,29 @@
 }
 
 
+.pos-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.btn-movimentacao {
+  background: #10b981;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.3);
+}
+
+.btn-movimentacao:hover {
+  background: #059669;
+  transform: translateY(-2px);
+}
+
 /* ============ BOTÃO MODO FOCO ============ */
 .btn-focus-mode {
   background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
@@ -634,4 +657,65 @@
 
 .btn-focus-mode:active {
   transform: translateY(0);
+}
+
+/* Modal de Abertura */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+.modal-content {
+  background: white;
+  padding: 2rem;
+  border-radius: 12px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+}
+
+.modal-content h3 {
+  margin-top: 0;
+  color: #1f2937;
+  margin-bottom: 0.5rem;
+}
+
+.modal-content p {
+  color: #6b7280;
+  font-size: 0.875rem;
+  margin-bottom: 1.5rem;
+}
+
+.form-group {
+  margin-bottom: 1.25rem;
+}
+
+.form-group label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 0.5rem;
+}
+
+.form-group input, .form-group textarea {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 1rem;
+}
+
+.form-group textarea {
+  height: 80px;
+  resize: none;
 }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { PageShell } from '../components/PageShell';
 import { apiFetch } from '../lib/api';
+import { ApprovalModal } from '../components/ApprovalModal';
 import { toast } from 'sonner';
 import './CaixaFechamento.css';
 
@@ -13,6 +14,10 @@ export function CaixaFechamento() {
   const [difference, setDifference] = useState(0);
   const [notes, setNotes] = useState('');
   const [processing, setProcessing] = useState(false);
+
+  // Estado para Aprovação
+  const [showApprovalModal, setShowApprovalModal] = useState(false);
+  const [pendingMovement, setPendingMovement] = useState(null);
 
   // Carregar dados de caixa
   useEffect(() => {
@@ -49,8 +54,15 @@ export function CaixaFechamento() {
   }, [totalCounted, totalExpected]);
 
   // Registrar movimentação
-  const addMovement = useCallback(async (type, amount) => {
+  const addMovement = useCallback(async (type, amount, approvalToken = null) => {
     if (!amount || isNaN(amount)) return;
+
+    // Sangria exige aprovação
+    if (type === 'withdrawal' && !approvalToken) {
+      setPendingMovement({ type, amount });
+      setShowApprovalModal(true);
+      return;
+    }
     
     try {
       const response = await apiFetch('/pos/cash-session/movement', {
@@ -59,6 +71,7 @@ export function CaixaFechamento() {
           type,
           amount: parseFloat(amount),
           reason: `${type === 'withdrawal' ? 'Sangria' : 'Suprimento'} manual`,
+          approval_token: approvalToken
         }),
       });
       toast.success(`${type === 'withdrawal' ? 'Sangria' : 'Suprimento'} registrado com sucesso!`);
@@ -69,10 +82,19 @@ export function CaixaFechamento() {
       if (updatedCaixa) {
         setTotalExpected(parseFloat(updatedCaixa.expected_amount || updatedCaixa.opening_amount || 0));
       }
+      
+      setShowApprovalModal(false);
+      setPendingMovement(null);
     } catch (error) {
       toast.error('Erro ao registrar movimentação: ' + error.message);
     }
   }, []);
+
+  const handleMovementApproved = (token) => {
+    if (pendingMovement) {
+      addMovement(pendingMovement.type, pendingMovement.amount, token);
+    }
+  };
 
   // Fechar caixa
   const handleCloseCaixa = async () => {
@@ -120,6 +142,18 @@ export function CaixaFechamento() {
       title="Fechamento de Caixa"
       subtitle={`Operador: ${caixaData.operator_name || 'Atual'}`}
     >
+      {showApprovalModal && (
+        <ApprovalModal
+          action="cash_withdrawal"
+          title="Autorização de Sangria"
+          message={`Uma sangria de R$ ${parseFloat(pendingMovement?.amount).toFixed(2)} está sendo solicitada. Um gerente deve autorizar.`}
+          onApproved={handleMovementApproved}
+          onCancel={() => {
+            setShowApprovalModal(false);
+            setPendingMovement(null);
+          }}
+        />
+      )}
       <div className="caixa-fechamento-container">
         {/* Resumo */}
         <div className="resumo-section">

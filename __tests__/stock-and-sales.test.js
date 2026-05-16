@@ -206,11 +206,32 @@ describe("stock and sales flows", () => {
 
   it("opens, moves and closes a cash session", async () => {
     const { token } = await createUserWithSession({ role: "supervisor" });
+    
+    // Criar um gerente para aprovar
+    const passwordHash = bcrypt.hashSync("senha1234", 10);
+    await run(
+      "INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, ?, 1) RETURNING id",
+      ["Manager", "manager-approval@example.com", passwordHash, "manager"]
+    );
+
+    // Primeiro, obter um token de aprovação
+    const approvalResponse = await request(app)
+      .post("/api/approvals")
+      .send({
+        email: "manager-approval@example.com",
+        password: "senha1234",
+        action: "open_cash_session"
+      });
+    const approvalToken = approvalResponse.body.token;
 
     const openResponse = await request(app)
       .post("/api/pos/cash-session/open")
       .set("Authorization", `Bearer ${token}`)
-      .send({ opening_amount: 100, notes: "Abertura turno manhã" });
+      .send({ 
+        opening_amount: 100, 
+        notes: "Abertura turno manhã",
+        approval_token: approvalToken
+      });
 
     expect(openResponse.status).toBe(201);
     expect(openResponse.body.opening_amount).toBe(100);
