@@ -16,6 +16,7 @@ export function AdminFuncionarios() {
   const [formData, setFormData] = useState({
     name: "",
     email: "",
+    password: "",
     role: "operator",
     status: "active",
   });
@@ -53,8 +54,8 @@ export function AdminFuncionarios() {
 
   // Criar novo funcionário
   const handleCreateEmployee = async () => {
-    if (!formData.name || !formData.email || !formData.role) {
-      setError("Preencha todos os campos obrigatórios.");
+    if (!formData.name || !formData.email || !formData.password || !formData.role) {
+      setError("Preencha todos os campos obrigatórios (incluindo senha).");
       return;
     }
 
@@ -62,6 +63,7 @@ export function AdminFuncionarios() {
       const newEmployee = {
         name: formData.name,
         email: formData.email,
+        password: formData.password,
         role: formData.role,
         status: formData.status,
       };
@@ -72,7 +74,7 @@ export function AdminFuncionarios() {
       });
 
       setSuccessMessage("Funcionário criado com sucesso!");
-      setFormData({ name: "", email: "", role: "operator", status: "active" });
+      setFormData({ name: "", email: "", password: "", role: "operator", status: "active" });
       setShowNewEmployeeModal(false);
 
       // Recarregar funcionários
@@ -155,7 +157,7 @@ export function AdminFuncionarios() {
 
   // Resetar formulário
   const resetForm = () => {
-    setFormData({ name: "", email: "", role: "operator", status: "active" });
+    setFormData({ name: "", email: "", password: "", role: "operator", status: "active" });
     setError("");
   };
 
@@ -303,6 +305,18 @@ export function AdminFuncionarios() {
               />
             </div>
 
+            <div className="form-group">
+              <label>Senha *</label>
+              <input
+                type="password"
+                value={formData.password}
+                onChange={(e) =>
+                  setFormData({ ...formData, password: e.target.value })
+                }
+                placeholder="Digite a senha (mín. 8 caracteres)"
+              />
+            </div>
+
             <div className="form-row">
               <div className="form-group">
                 <label>Cargo *</label>
@@ -377,6 +391,18 @@ export function AdminFuncionarios() {
                   setFormData({ ...formData, email: e.target.value })
                 }
                 placeholder="Digite o email"
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Senha *</label>
+              <input
+                type="password"
+                value={formData.password}
+                onChange={(e) =>
+                  setFormData({ ...formData, password: e.target.value })
+                }
+                placeholder="Digite a senha (mín. 8 caracteres)"
               />
             </div>
 
