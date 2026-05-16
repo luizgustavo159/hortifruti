@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { apiFetch } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 
 export function Login() {
@@ -19,7 +18,7 @@ export function Login() {
       await login(email, password);
       navigate("/caixa");
     } catch (submitError) {
-      setError(submitError.message || "Falha ao autenticar.");
+      setError(submitError.message || "Falha ao autenticar. Verifique suas credenciais.");
     } finally {
       setLoading(false);
     }
@@ -28,48 +27,108 @@ export function Login() {
   return (
     <div className="login-page">
       <section className="login-hero">
-        <h1>GreenStore Pro</h1>
-        <p>Centralize vendas, estoque e performance em um painel moderno e seguro.</p>
-        <div className="panel-grid">
-          <div className="panel">
-            <h4>Visão 360°</h4>
-            <p>Indicadores diários, alertas e prioridades organizadas.</p>
+        <div className="hero-content">
+          <div className="logo-container">
+            <div className="logo-icon">🌿</div>
+            <h1>GreenStore Pro</h1>
           </div>
-          <div className="panel">
-            <h4>Operação ágil</h4>
-            <p>Fluxo de caixa rápido com histórico de decisões.</p>
+          <p className="hero-description">
+            A solução definitiva para gestão de hortifruti. 
+            Controle seu estoque, vendas e finanças em um só lugar.
+          </p>
+          
+          <div className="hero-features">
+            <div className="feature-item">
+              <span className="feature-icon">📊</span>
+              <div>
+                <h4>Dashboard Inteligente</h4>
+                <p>Visualize sua performance em tempo real com gráficos detalhados.</p>
+              </div>
+            </div>
+            <div className="feature-item">
+              <span className="feature-icon">📦</span>
+              <div>
+                <h4>Controle de Estoque</h4>
+                <p>Gestão automatizada de entradas, saídas e alertas de reposição.</p>
+              </div>
+            </div>
+            <div className="feature-item">
+              <span className="feature-icon">💰</span>
+              <div>
+                <h4>Fluxo de Caixa</h4>
+                <p>Acompanhamento rigoroso de todas as movimentações financeiras.</p>
+              </div>
+            </div>
           </div>
         </div>
+        <div className="hero-footer">
+          <p>© 2026 GreenStore Pro. Todos os direitos reservados.</p>
+        </div>
       </section>
-      <section className="login-card">
-        <form className="form" onSubmit={onSubmit}>
-          <h2>Entrar</h2>
-          <label>
-            Email
-            <input
-              type="email"
-              placeholder="nome@empresa.com"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            Senha
-            <input
-              type="password"
-              placeholder="••••••••"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-            />
-          </label>
-          {error ? <p style={{ color: "#c62828", margin: 0 }}>{error}</p> : null}
-          <button className="button" type="submit" disabled={loading}>
-            {loading ? "Entrando..." : "Acessar painel"}
-          </button>
-          <span className="badge">Suporte 24/7</span>
-        </form>
+
+      <section className="login-card-container">
+        <div className="login-form-wrapper">
+          <form className="login-form" onSubmit={onSubmit}>
+            <div className="form-header">
+              <h2>Bem-vindo de volta</h2>
+              <p>Acesse sua conta para gerenciar sua loja</p>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="email">E-mail corporativo</label>
+              <div className="input-wrapper">
+                <span className="input-icon">✉️</span>
+                <input
+                  id="email"
+                  type="email"
+                  placeholder="exemplo@greenstore.com"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="password">Senha de acesso</label>
+              <div className="input-wrapper">
+                <span className="input-icon">🔒</span>
+                <input
+                  id="password"
+                  type="password"
+                  placeholder="Sua senha segura"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  required
+                />
+              </div>
+            </div>
+
+            {error && (
+              <div className="form-error">
+                <span className="error-icon">⚠️</span>
+                {error}
+              </div>
+            )}
+
+            <button className="login-button" type="submit" disabled={loading}>
+              {loading ? (
+                <span className="loading-spinner"></span>
+              ) : (
+                "Entrar no Sistema"
+              )}
+            </button>
+
+            <div className="form-footer">
+              <p>Esqueceu sua senha? <a href="#">Contate o administrador</a></p>
+            </div>
+          </form>
+          
+          <div className="support-badge">
+            <span className="pulse"></span>
+            Suporte Técnico Ativo
+          </div>
+        </div>
       </section>
     </div>
   );
