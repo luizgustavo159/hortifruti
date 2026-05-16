@@ -709,6 +709,11 @@ router.post(
         if (err) {
           return res.status(400).json({ message: "Erro ao cadastrar produto." });
         }
+        logAudit({
+          action: "product_created",
+          details: { product_id: row.id, name: payload.name, sku: payload.sku },
+          performedBy: req.user.id
+        });
         return res.status(201).json({ id: row.id });
       }
     );
@@ -950,6 +955,11 @@ router.post(
       if (transactionErr) {
         return res.status(transactionErr.status || 500).json({ message: transactionErr.message || "Erro ao mover estoque." });
       }
+      logAudit({
+        action: "stock_move",
+        details: { product_id, delta: finalDelta, type, reason },
+        performedBy: req.user.id
+      });
       return res.json({ status: "ok" });
     });
   }
@@ -2551,8 +2561,14 @@ router.get("/api/users", authenticateToken, requireAdmin, (req, res) => {
       return res.status(500).json({ message: "Erro ao buscar usuários." });
     }
     const users = rows.map((row) => ({
-      ...row,
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      phone: row.phone,
+      role: row.role,
+      is_active: row.is_active,
       permissions: row.permissions ? JSON.parse(row.permissions) : [],
+      created_at: row.created_at,
     }));
     return res.json(users);
   });
@@ -2708,6 +2724,56 @@ router.put("/api/settings", authenticateToken, requireAdmin, (req, res) => {
     });
   });
   return res.json({ updated: entries.length });
+});
+
+router.delete("/api/users/:id", authenticateToken, requireAdmin, (req, res) => {
+  const userId = Number(req.params.id);
+  if (!userId) {
+    return res.status(400).json({ message: "ID do usuário inválido." });
+  }
+
+  // Validação: não permitir auto-exclusão
+  if (userId === req.user.id) {
+    return res.status(403).json({ message: "Não é possível excluir sua própria conta." });
+  }
+
+  // Validação: não permitir exclusão do último admin
+  db.get("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND id != ?", [userId], (countErr, countRow) => {
+    if (countErr) {
+      return res.status(500).json({ message: "Erro ao validar administradores." });
+    }
+    if (countRow.count === 0) {
+      return res.status(403).json({ message: "Não é possível excluir o último administrador." });
+    }
+
+    runWithTransaction((tx, finish) => {
+      // Revogar todas as sessões do usuário
+      tx.run("UPDATE sessions SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = ?", [userId], (revokeErr) => {
+        if (revokeErr) {
+          finish(revokeErr);
+          return;
+        }
+        // Marcar usuário como inativo (soft delete)
+        tx.run("UPDATE users SET is_active = 0 WHERE id = ?", [userId], (deactivateErr) => {
+          if (deactivateErr) {
+            finish(deactivateErr);
+            return;
+          }
+          finish(null);
+        });
+      });
+    }, (transactionErr) => {
+      if (transactionErr) {
+        return res.status(500).json({ message: "Erro ao excluir usuário." });
+      }
+      logAudit({
+        action: "user_deleted",
+        details: { user_id: userId },
+        performedBy: req.user.id
+      });
+      return res.json({ status: "ok", message: "Usuário excluído com sucesso." });
+    });
+  });
 });
 
 module.exports = {
