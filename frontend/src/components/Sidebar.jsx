@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { getAuthUser, hasRequiredRole } from "../lib/auth";
+import { ThemeSwitcher } from "./ThemeSwitcher";
 
 const navItems = [
   { to: "/caixa", label: "Caixa", minRole: "operator" },
@@ -32,6 +33,7 @@ export function Sidebar() {
         ))}
       </nav>
       <div>
+        <ThemeSwitcher />
         <span className="badge">{user?.role || "sem sessão"}</span>
         <button className="button" onClick={logout} style={{ marginTop: "12px", width: "100%" }} type="button">
           Sair

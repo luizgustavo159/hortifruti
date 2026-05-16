@@ -20,8 +20,8 @@
 
   /* Tipografia */
   font-family: "Inter", "Segoe UI", system-ui, sans-serif;
-  color: var(--color-dark);
-  background-color: var(--color-gray-lighter);
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
 
   /* Sombras Suaves */
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
@@ -30,14 +30,22 @@
   --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
 }
 
+:root.dark-mode {
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
+}
+
 * {
   box-sizing: border-box;
 }
 
 body {
   margin: 0;
-  background: var(--color-gray-lighter);
+  background: var(--bg-primary);
   padding: 0;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 a {
@@ -50,7 +58,7 @@ a {
   display: grid;
   grid-template-columns: 280px 1fr;
   min-height: 100vh;
-  background: var(--color-gray-lighter);
+  background: var(--bg-primary);
 }
 
 /* ============ SIDEBAR ============ */
@@ -126,7 +134,8 @@ a {
 .content {
   padding: 40px 48px;
   overflow-y: auto;
-  background: var(--color-gray-lighter);
+  background: var(--bg-primary);
+  transition: background-color 0.3s ease;
 }
 
 .topbar {
@@ -140,13 +149,15 @@ a {
   margin: 0;
   font-size: 32px;
   font-weight: 700;
-  color: var(--color-dark);
+  color: var(--text-primary);
+  transition: color 0.3s ease;
 }
 
 .topbar p {
   margin: 0;
   font-size: 14px;
-  color: var(--color-gray);
+  color: var(--text-secondary);
+  transition: color 0.3s ease;
 }
 
 /* ============ BADGES ============ */
@@ -169,12 +180,13 @@ a {
 }
 
 .card {
-  background: var(--color-white);
+  background: var(--bg-secondary);
   border-radius: 16px;
   padding: 24px;
   box-shadow: var(--shadow-md);
   transition: all 0.3s ease;
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
 }
 
 .card:hover {
@@ -185,7 +197,7 @@ a {
 .card h3 {
   margin: 0 0 12px;
   font-size: 13px;
-  color: var(--color-gray);
+  color: var(--text-secondary);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -193,7 +205,7 @@ a {
 
 .card strong {
   font-size: 28px;
-  color: var(--color-dark);
+  color: var(--text-primary);
   display: block;
   margin-bottom: 8px;
 }
@@ -201,7 +213,7 @@ a {
 .card p {
   margin: 0;
   font-size: 12px;
-  color: var(--color-gray);
+  color: var(--text-secondary);
 }
 
 /* ============ SEÇÕES ============ */
@@ -215,15 +227,16 @@ a {
 .table {
   width: 100%;
   border-collapse: collapse;
-  background: var(--color-white);
+  background: var(--bg-secondary);
   border-radius: 12px;
   overflow: hidden;
   box-shadow: var(--shadow-md);
+  color: var(--text-primary);
 }
 
 .table thead {
-  background: var(--color-gray-lighter);
-  border-bottom: 2px solid var(--color-gray-light);
+  background: var(--bg-tertiary);
+  border-bottom: 2px solid var(--border-color);
 }
 
 .table th {
@@ -231,7 +244,7 @@ a {
   padding: 16px 18px;
   font-size: 12px;
   font-weight: 700;
-  color: var(--color-dark);
+  color: var(--text-primary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -239,13 +252,13 @@ a {
 .table td {
   text-align: left;
   padding: 14px 18px;
-  border-bottom: 1px solid var(--color-gray-light);
+  border-bottom: 1px solid var(--border-color);
   font-size: 14px;
-  color: var(--color-dark);
+  color: var(--text-primary);
 }
 
 .table tbody tr:hover {
-  background: var(--color-gray-lighter);
+  background: var(--bg-tertiary);
 }
 
 /* ============ TAGS ============ */
@@ -264,7 +277,7 @@ a {
   display: grid;
   grid-template-columns: 1.2fr 1fr;
   min-height: 100vh;
-  background: var(--color-white);
+  background: var(--bg-primary);
 }
 
 .login-hero {
@@ -296,11 +309,12 @@ a {
   align-items: center;
   justify-content: center;
   padding: 40px;
-  background: var(--color-gray-lighter);
+  background: var(--bg-primary);
+  transition: background-color 0.3s ease;
 }
 
 .form {
-  background: var(--color-white);
+  background: var(--bg-secondary);
   padding: 40px;
   border-radius: 20px;
   box-shadow: var(--shadow-xl);
@@ -309,19 +323,20 @@ a {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
 }
 
 .form h2 {
   margin: 0 0 8px;
   font-size: 28px;
-  color: var(--color-dark);
+  color: var(--text-primary);
   font-weight: 700;
 }
 
 .form label {
   font-size: 13px;
-  color: var(--color-gray);
+  color: var(--text-secondary);
   font-weight: 600;
   display: block;
   margin-bottom: 6px;
@@ -330,21 +345,22 @@ a {
 .form input {
   padding: 14px 16px;
   border-radius: 12px;
-  border: 1px solid var(--color-gray-light);
+  border: 1px solid var(--border-color);
   font-size: 14px;
   font-family: inherit;
   transition: all 0.3s ease;
-  background: var(--color-white);
+  background: var(--bg-primary);
+  color: var(--text-primary);
 }
 
 .form input:focus {
   outline: none;
-  border-color: var(--color-primary);
+  border-color: var(--accent-primary);
   box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
 }
 
 .form input::placeholder {
-  color: var(--color-gray-light);
+  color: var(--text-tertiary);
 }
 
 /* ============ BOTÕES ============ */
@@ -372,19 +388,20 @@ a {
 }
 
 .button:disabled {
-  background: var(--color-gray-light);
-  color: var(--color-gray);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
   cursor: not-allowed;
 }
 
 .button-secondary {
-  background: var(--color-gray-light);
-  color: var(--color-dark);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
 }
 
 .button-secondary:hover {
-  background: var(--color-gray);
-  color: white;
+  background: var(--border-color);
+  color: var(--text-primary);
 }
 
 /* ============ PAINÉIS ============ */
@@ -395,12 +412,13 @@ a {
 }
 
 .panel {
-  background: var(--color-white);
+  background: var(--bg-secondary);
   padding: 28px;
   border-radius: 16px;
   box-shadow: var(--shadow-md);
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--border-color);
   transition: all 0.3s ease;
+  color: var(--text-primary);
 }
 
 .panel:hover {
@@ -411,14 +429,14 @@ a {
 .panel h4 {
   margin: 0 0 12px;
   font-size: 16px;
-  color: var(--color-dark);
+  color: var(--text-primary);
   font-weight: 700;
 }
 
 .panel p {
   margin: 0;
   font-size: 14px;
-  color: var(--color-gray);
+  color: var(--text-secondary);
   line-height: 1.6;
 }
 
@@ -436,17 +454,17 @@ a {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: var(--color-gray-lighter);
+  background: var(--bg-tertiary);
   padding: 14px 16px;
   border-radius: 12px;
   font-size: 14px;
-  color: var(--color-dark);
+  color: var(--text-primary);
   transition: all 0.2s ease;
   border: 1px solid transparent;
 }
 
 .list li:hover {
-  background: var(--color-white);
+  background: var(--bg-secondary);
   border-color: var(--color-primary-light);
 }
 

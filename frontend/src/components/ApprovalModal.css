@@ -13,23 +13,24 @@
 }
 
 .modal-content {
-  background: white;
+  background: var(--bg-secondary);
   padding: 2rem;
   border-radius: 12px;
   width: 100%;
   max-width: 400px;
   box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  color: var(--text-primary);
 }
 
 .modal-content h3 {
   margin-top: 0;
-  color: #1f2937;
+  color: var(--text-primary);
   font-size: 1.25rem;
   margin-bottom: 0.5rem;
 }
 
 .modal-content p {
-  color: #6b7280;
+  color: var(--text-secondary);
   font-size: 0.875rem;
   margin-bottom: 1.5rem;
 }
@@ -42,30 +43,32 @@
   display: block;
   font-size: 0.875rem;
   font-weight: 500;
-  color: #374151;
+  color: var(--text-primary);
   margin-bottom: 0.25rem;
 }
 
 .form-group input {
   width: 100%;
   padding: 0.625rem;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   font-size: 0.875rem;
+  background: var(--bg-primary);
+  color: var(--text-primary);
 }
 
 .form-group input:focus {
   outline: none;
-  border-color: #10b981;
-  ring: 2px ring #10b981;
+  border-color: var(--accent-primary);
+  ring: 2px ring var(--accent-primary);
 }
 
 .error-message {
-  color: #ef4444;
+  color: var(--accent-danger);
   font-size: 0.875rem;
   margin-bottom: 1rem;
   padding: 0.5rem;
-  background: #fef2f2;
+  background: rgba(239, 68, 68, 0.1);
   border-radius: 4px;
 }
 
@@ -85,17 +88,17 @@
 }
 
 .btn-cancel {
-  background: #f3f4f6;
-  color: #374151;
-  border: 1px solid #d1d5db;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
 }
 
 .btn-cancel:hover {
-  background: #e5e7eb;
+  background: var(--border-color);
 }
 
 .btn-approve {
-  background: #10b981;
+  background: var(--accent-primary);
   color: white;
   border: none;
 }
