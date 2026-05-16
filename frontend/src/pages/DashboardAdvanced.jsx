@@ -6,64 +6,82 @@ import {
 } from 'recharts';
 import { PageShell } from '../components/PageShell';
 import { apiFetch } from '../lib/api';
-import { toast } from 'sonner';
 import './DashboardAdvanced.css';
 
 export function DashboardAdvanced() {
   const [salesData, setSalesData] = useState([]);
   const [categoryData, setCategoryData] = useState([]);
   const [operatorData, setOperatorData] = useState([]);
-  const [heatmapData, setHeatmapData] = useState([]);
+  const [summaryData, setSummaryData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [dateRange, setDateRange] = useState({
+    start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    end: new Date().toISOString().split('T')[0],
+  });
 
   useEffect(() => {
     loadDashboardData();
-  }, []);
+  }, [dateRange]);
 
   const loadDashboardData = async () => {
     try {
       setLoading(true);
-      // Simular dados de vendas por hora
+      setError("");
+
+      const params = new URLSearchParams({
+        start: dateRange.start,
+        end: dateRange.end,
+      });
+
+      const [summary, byOperator, byCategory] = await Promise.all([
+        apiFetch(`/reports/summary?${params}`),
+        apiFetch(`/reports/by-operator?${params}`),
+        apiFetch(`/reports/by-category?${params}`),
+      ]);
+
+      setSummaryData(summary);
+
+      // Processar dados por operador
+      if (Array.isArray(byOperator)) {
+        setOperatorData(byOperator.slice(0, 5).map(op => ({
+          nome: op.name || "Sem nome",
+          vendas: Number(op.total_sales || 0),
+          itens: Number(op.total_items || 0),
+        })));
+      }
+
+      // Processar dados por categoria
+      if (Array.isArray(byCategory)) {
+        const colors = ['#ef4444', '#10b981', '#3b82f6', '#f59e0b', '#8b5cf6'];
+        setCategoryData(byCategory.map((cat, idx) => ({
+          name: cat.category || "Sem categoria",
+          value: Number(cat.total_sales || 0),
+          items: Number(cat.total_items || 0),
+          color: colors[idx % colors.length],
+        })));
+      }
+
+      // Gerar dados de vendas por hora (simulado com base no total)
       const hourlyData = Array.from({ length: 24 }, (_, i) => ({
         hora: `${i}:00`,
-        vendas: Math.floor(Math.random() * 5000) + 1000,
-        lucro: Math.floor(Math.random() * 2000) + 500,
+        vendas: Math.floor((summary?.total_sales || 0) / 24 * (0.8 + Math.random() * 0.4)),
       }));
       setSalesData(hourlyData);
-
-      // Simular dados por categoria
-      const categories = [
-        { name: 'Frutas', value: 35, color: '#ef4444' },
-        { name: 'Legumes', value: 28, color: '#10b981' },
-        { name: 'Verduras', value: 22, color: '#3b82f6' },
-        { name: 'Tubérculos', value: 15, color: '#f59e0b' },
-      ];
-      setCategoryData(categories);
-
-      // Simular dados por operador
-      const operators = [
-        { nome: 'João Silva', vendas: 12500, meta: 15000 },
-        { nome: 'Maria Santos', vendas: 14200, meta: 15000 },
-        { nome: 'Pedro Costa', vendas: 11800, meta: 15000 },
-        { nome: 'Ana Oliveira', vendas: 13900, meta: 15000 },
-      ];
-      setOperatorData(operators);
-
-      // Simular heatmap de horários
-      const heatmap = Array.from({ length: 24 }, (_, i) => ({
-        hora: i,
-        intensidade: Math.floor(Math.random() * 100),
-      }));
-      setHeatmapData(heatmap);
-    } catch (error) {
-      toast.error('Erro ao carregar dados: ' + error.message);
+    } catch (err) {
+      setError(err.message || "Erro ao carregar dados do dashboard");
+      console.error("Erro ao carregar dashboard:", err);
     } finally {
       setLoading(false);
     }
   };
 
   if (loading) {
-    return <PageShell title="Dashboard Avançado"><div className="loading">Carregando...</div></PageShell>;
+    return (
+      <PageShell title="Dashboard Avançado">
+        <div className="loading">Carregando dados...</div>
+      </PageShell>
+    );
   }
 
   return (
@@ -72,6 +90,46 @@ export function DashboardAdvanced() {
       subtitle="Análise profissional de vendas em tempo real"
     >
       <div className="dashboard-advanced">
+        {error && <div className="error-message">{error}</div>}
+
+        {/* Filtro de Data */}
+        <div className="date-filter">
+          <div className="filter-group">
+            <label>Data Inicial:</label>
+            <input
+              type="date"
+              value={dateRange.start}
+              onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+            />
+          </div>
+          <div className="filter-group">
+            <label>Data Final:</label>
+            <input
+              type="date"
+              value={dateRange.end}
+              onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+            />
+          </div>
+        </div>
+
+        {/* Cards de Resumo */}
+        {summaryData && (
+          <div className="summary-cards">
+            <div className="summary-card">
+              <h4>Total de Vendas</h4>
+              <p className="value">R$ {Number(summaryData.total_sales || 0).toFixed(2)}</p>
+            </div>
+            <div className="summary-card">
+              <h4>Perdas de Estoque</h4>
+              <p className="value">R$ {Number(summaryData.total_losses || 0).toFixed(2)}</p>
+            </div>
+            <div className="summary-card">
+              <h4>Itens Críticos</h4>
+              <p className="value">{summaryData.critical_items?.length || 0}</p>
+            </div>
+          </div>
+        )}
+
         {/* Gráfico de Vendas por Hora */}
         <div className="chart-container">
           <h3>📈 Vendas por Hora</h3>
@@ -86,7 +144,7 @@ export function DashboardAdvanced() {
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="hora" />
               <YAxis />
-              <Tooltip />
+              <Tooltip formatter={(value) => `R$ ${value.toFixed(2)}`} />
               <Area
                 type="monotone"
                 dataKey="vendas"
@@ -98,89 +156,86 @@ export function DashboardAdvanced() {
           </ResponsiveContainer>
         </div>
 
-        {/* Gráfico de Lucro vs Meta */}
+        {/* Gráfico de Vendas por Operador */}
         <div className="chart-container">
           <h3>💰 Desempenho por Operador</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={operatorData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="nome" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="vendas" fill="#10b981" name="Vendas" />
-              <Bar dataKey="meta" fill="#3b82f6" name="Meta" />
-            </BarChart>
-          </ResponsiveContainer>
+          {operatorData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={operatorData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="nome" />
+                <YAxis />
+                <Tooltip formatter={(value) => `R$ ${value.toFixed(2)}`} />
+                <Legend />
+                <Bar dataKey="vendas" fill="#10b981" name="Vendas (R$)" />
+                <Bar dataKey="itens" fill="#3b82f6" name="Itens Vendidos" />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <p className="no-data">Nenhum dado de operador disponível</p>
+          )}
         </div>
 
         {/* Gráfico de Pizza - Categorias */}
         <div className="chart-container">
           <h3>🥧 Vendas por Categoria</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={categoryData}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={({ name, value }) => `${name} (${value}%)`}
-                outerRadius={100}
-                fill="#8884d8"
-                dataKey="value"
-              >
-                {categoryData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Heatmap de Horários */}
-        <div className="chart-container">
-          <h3>🔥 Mapa de Calor - Horários de Pico</h3>
-          <div className="heatmap">
-            {heatmapData.map((item, idx) => (
-              <div
-                key={idx}
-                className="heatmap-cell"
-                style={{
-                  backgroundColor: `rgba(16, 185, 129, ${item.intensidade / 100})`,
-                }}
-                title={`${item.hora}:00 - Intensidade: ${item.intensidade}%`}
-              >
-                <span className="heatmap-label">{item.hora}</span>
-              </div>
-            ))}
-          </div>
+          {categoryData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={categoryData}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  label={({ name, value }) => `${name} (R$ ${value.toFixed(0)})`}
+                  outerRadius={100}
+                  fill="#8884d8"
+                  dataKey="value"
+                >
+                  {categoryData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value) => `R$ ${value.toFixed(2)}`} />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <p className="no-data">Nenhum dado de categoria disponível</p>
+          )}
         </div>
 
         {/* Insights */}
         <div className="insights-section">
           <h3>💡 Insights Automáticos</h3>
           <div className="insights-grid">
-            <div className="insight-card">
-              <h4>Horário de Pico</h4>
-              <p className="insight-value">12:00 - 14:00</p>
-              <p className="insight-desc">Maior movimento de vendas</p>
-            </div>
-            <div className="insight-card">
-              <h4>Categoria Top</h4>
-              <p className="insight-value">Frutas</p>
-              <p className="insight-desc">35% do faturamento</p>
-            </div>
-            <div className="insight-card">
-              <h4>Operador Destaque</h4>
-              <p className="insight-value">Maria Santos</p>
-              <p className="insight-desc">94.7% da meta</p>
-            </div>
-            <div className="insight-card">
-              <h4>Produto Crítico</h4>
-              <p className="insight-value">Alface</p>
-              <p className="insight-desc">Estoque baixo - Reabastecer!</p>
-            </div>
+            {operatorData.length > 0 && (
+              <div className="insight-card">
+                <h4>Operador Destaque</h4>
+                <p className="insight-value">{operatorData[0]?.nome || "N/A"}</p>
+                <p className="insight-desc">R$ {operatorData[0]?.vendas.toFixed(2) || "0.00"} em vendas</p>
+              </div>
+            )}
+            {categoryData.length > 0 && (
+              <div className="insight-card">
+                <h4>Categoria Top</h4>
+                <p className="insight-value">{categoryData[0]?.name || "N/A"}</p>
+                <p className="insight-desc">R$ {categoryData[0]?.value.toFixed(2) || "0.00"}</p>
+              </div>
+            )}
+            {summaryData?.critical_items && summaryData.critical_items.length > 0 && (
+              <div className="insight-card">
+                <h4>Produto Crítico</h4>
+                <p className="insight-value">{summaryData.critical_items[0]?.name || "N/A"}</p>
+                <p className="insight-desc">Estoque: {summaryData.critical_items[0]?.current_stock || 0}</p>
+              </div>
+            )}
+            {summaryData && (
+              <div className="insight-card">
+                <h4>Total de Vendas</h4>
+                <p className="insight-value">R$ {Number(summaryData.total_sales || 0).toFixed(2)}</p>
+                <p className="insight-desc">No período selecionado</p>
+              </div>
+            )}
           </div>
         </div>
       </div>

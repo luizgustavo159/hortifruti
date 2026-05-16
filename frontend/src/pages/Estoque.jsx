@@ -135,18 +135,32 @@ export function Estoque() {
     }
 
     try {
-      const endpoint =
-        movement.type === "loss"
-          ? "/stock/loss"
-          : movement.type === "adjust"
-            ? "/stock/adjust"
-            : "/stock/move";
+      let endpoint = "/stock/adjust";
+      let movementData = {};
 
-      const movementData = {
-        product_id: selectedProduct.id,
-        quantity: parseInt(movement.quantity),
-        reason: movement.reason,
-      };
+      if (movement.type === "loss") {
+        endpoint = "/stock/loss";
+        movementData = {
+          product_id: selectedProduct.id,
+          quantity: parseInt(movement.quantity),
+          reason: movement.reason,
+        };
+      } else if (movement.type === "adjust") {
+        endpoint = "/stock/adjust";
+        movementData = {
+          product_id: selectedProduct.id,
+          delta: parseInt(movement.quantity),
+          reason: movement.reason,
+        };
+      } else if (movement.type === "move") {
+        endpoint = "/stock/move";
+        movementData = {
+          product_id: selectedProduct.id,
+          quantity: parseInt(movement.quantity),
+          type: "inbound",
+          reason: movement.reason,
+        };
+      }
 
       const headers = approvalToken ? { "x-approval-token": approvalToken } : {};
 

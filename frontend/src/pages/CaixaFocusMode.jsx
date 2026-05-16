@@ -180,8 +180,14 @@ export function CaixaFocusMode() {
         }),
       });
 
+      // Tratar resposta corretamente - pode ser multi-item ou single-item
+      let documentNumber = response.document_number;
+      if (!documentNumber && response.items && response.items.length > 0) {
+        documentNumber = response.items[0].document_number;
+      }
+
       setSuccessMessage(
-        `✅ Venda finalizada! Doc: ${response.document_number || response.id}`
+        `✅ Venda finalizada! Doc: ${documentNumber || response.id || 'OK'}`
       );
       setCart([]);
       setSearchTerm('');

@@ -18,7 +18,7 @@ export function AdminFuncionarios() {
     email: "",
     password: "",
     role: "operator",
-    status: "active",
+    is_active: true,
   });
 
   const roles = [
@@ -65,7 +65,7 @@ export function AdminFuncionarios() {
         email: formData.email,
         password: formData.password,
         role: formData.role,
-        status: formData.status,
+        is_active: formData.is_active,
       };
 
       await apiFetch("/users", {
@@ -74,7 +74,7 @@ export function AdminFuncionarios() {
       });
 
       setSuccessMessage("Funcionário criado com sucesso!");
-      setFormData({ name: "", email: "", password: "", role: "operator", status: "active" });
+      setFormData({ name: "", email: "", password: "", role: "operator", is_active: true });
       setShowNewEmployeeModal(false);
 
       // Recarregar funcionários
@@ -99,7 +99,7 @@ export function AdminFuncionarios() {
         name: formData.name,
         email: formData.email,
         role: formData.role,
-        status: formData.status,
+        is_active: formData.is_active,
       };
 
       await apiFetch(`/users/${selectedEmployee.id}`, {
@@ -108,7 +108,7 @@ export function AdminFuncionarios() {
       });
 
       setSuccessMessage("Funcionário atualizado com sucesso!");
-      setFormData({ name: "", email: "", role: "operator", status: "active" });
+      setFormData({ name: "", email: "", role: "operator", is_active: true });
       setShowEditModal(false);
       setSelectedEmployee(null);
 
@@ -150,14 +150,14 @@ export function AdminFuncionarios() {
       name: employee.name,
       email: employee.email,
       role: employee.role,
-      status: employee.status || "active",
+      is_active: Boolean(employee.is_active),
     });
     setShowEditModal(true);
   };
 
   // Resetar formulário
   const resetForm = () => {
-    setFormData({ name: "", email: "", password: "", role: "operator", status: "active" });
+    setFormData({ name: "", email: "", password: "", role: "operator", is_active: true });
     setError("");
   };
 
@@ -236,9 +236,9 @@ export function AdminFuncionarios() {
                       </td>
                       <td>
                         <span
-                          className={`status-badge ${employee.status || "active"}`}
+                          className={`status-badge ${employee.is_active ? "active" : "inactive"}`}
                         >
-                          {employee.status === "active" ? "Ativo" : "Inativo"}
+                          {employee.is_active ? "Ativo" : "Inativo"}
                         </span>
                       </td>
                       <td>
@@ -337,9 +337,9 @@ export function AdminFuncionarios() {
               <div className="form-group">
                 <label>Status *</label>
                 <select
-                  value={formData.status}
+                  value={formData.is_active ? "active" : "inactive"}
                   onChange={(e) =>
-                    setFormData({ ...formData, status: e.target.value })
+                    setFormData({ ...formData, is_active: e.target.value === "active" })
                   }
                 >
                   <option value="active">Ativo</option>
@@ -395,7 +395,7 @@ export function AdminFuncionarios() {
             </div>
 
             <div className="form-group">
-              <label>Senha *</label>
+              <label>Senha (deixe em branco para manter a atual)</label>
               <input
                 type="password"
                 value={formData.password}
@@ -426,9 +426,9 @@ export function AdminFuncionarios() {
               <div className="form-group">
                 <label>Status *</label>
                 <select
-                  value={formData.status}
+                  value={formData.is_active ? "active" : "inactive"}
                   onChange={(e) =>
-                    setFormData({ ...formData, status: e.target.value })
+                    setFormData({ ...formData, is_active: e.target.value === "active" })
                   }
                 >
                   <option value="active">Ativo</option>
