@@ -46,7 +46,11 @@ export async function apiFetch(path, options = {}) {
       clearToken();
       clearUser();
     }
-    const message = data?.message || "Erro na requisição.";
+    let message = data?.message;
+    if (!message && data?.errors && Array.isArray(data.errors)) {
+      message = data.errors.map(e => e.msg).join(" ");
+    }
+    if (!message) message = "Erro na requisição.";
     const error = new Error(message);
     error.status = response.status;
     error.data = data;
