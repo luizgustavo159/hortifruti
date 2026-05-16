@@ -1,6 +1,6 @@
-import { NavLink, useNavigate } from "react-router-dom";
-import { apiFetch } from "../lib/api";
-import { clearToken, clearUser, getAuthUser, hasRequiredRole } from "../lib/auth";
+import { NavLink } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import { getAuthUser, hasRequiredRole } from "../lib/auth";
 
 const navItems = [
   { to: "/caixa", label: "Caixa", minRole: "operator" },
@@ -14,21 +14,9 @@ const navItems = [
 ];
 
 export function Sidebar() {
-  const navigate = useNavigate();
+  const { logout } = useAuth();
   const user = getAuthUser();
   const items = navItems.filter(item => hasRequiredRole(item.minRole));
-
-  const logout = async () => {
-    try {
-      await apiFetch("/auth/logout", { method: "POST" });
-    } catch (_error) {
-      // Mesmo se a sessão já estiver inválida no backend, limpamos o estado local.
-    } finally {
-      clearToken();
-      clearUser();
-      navigate("/", { replace: true });
-    }
-  };
 
   return (
     <aside className="sidebar">

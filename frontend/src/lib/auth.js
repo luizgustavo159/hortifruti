@@ -7,22 +7,22 @@ const roleLevels = {
   admin: 4,
 };
 
-export const getToken = () => localStorage.getItem(TOKEN_KEY);
+export const getToken = () => sessionStorage.getItem(TOKEN_KEY);
 
 export const setToken = (token) => {
   if (!token) {
     clearToken();
     return;
   }
-  localStorage.setItem(TOKEN_KEY, token);
+  sessionStorage.setItem(TOKEN_KEY, token);
 };
 
 export const clearToken = () => {
-  localStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(TOKEN_KEY);
 };
 
 export const getUser = () => {
-  const raw = localStorage.getItem(USER_KEY);
+  const raw = sessionStorage.getItem(USER_KEY);
   if (!raw) {
     return null;
   }
@@ -38,11 +38,11 @@ export const setUser = (user) => {
   if (!user) {
     return;
   }
-  localStorage.setItem(USER_KEY, JSON.stringify(user));
+  sessionStorage.setItem(USER_KEY, JSON.stringify(user));
 };
 
 export const clearUser = () => {
-  localStorage.removeItem(USER_KEY);
+  sessionStorage.removeItem(USER_KEY);
 };
 
 export const decodeTokenPayload = (token) => {

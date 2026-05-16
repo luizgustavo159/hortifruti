@@ -14,14 +14,14 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        const token = localStorage.getItem('greenstore_token');
+        const token = sessionStorage.getItem('greenstore_token');
         if (!token) {
           setLoading(false);
           return;
         }
 
-        // Tentar recuperar usuário do localStorage primeiro para renderização rápida
-        const savedUser = localStorage.getItem('greenstore_user');
+        // Tentar recuperar usuário do sessionStorage primeiro para renderização rápida
+        const savedUser = sessionStorage.getItem('greenstore_user');
         if (savedUser) {
           setUser(JSON.parse(savedUser));
         }
@@ -29,12 +29,12 @@ export function AuthProvider({ children }) {
         // Verificar se token ainda é válido em segundo plano
         const response = await apiFetch('/auth/me');
         setUser(response);
-        localStorage.setItem('greenstore_user', JSON.stringify(response));
+        sessionStorage.setItem('greenstore_user', JSON.stringify(response));
       } catch (err) {
         console.error('Erro na verificação de autenticação:', err);
-        localStorage.removeItem('greenstore_token');
-        localStorage.removeItem('greenstore_refresh_token');
-        localStorage.removeItem('greenstore_user');
+        sessionStorage.removeItem('greenstore_token');
+        sessionStorage.removeItem('greenstore_refresh_token');
+        sessionStorage.removeItem('greenstore_user');
         setUser(null);
       } finally {
         setLoading(false);
@@ -43,6 +43,29 @@ export function AuthProvider({ children }) {
 
     checkAuth();
   }, []);
+
+  // Implementar expiração por inatividade (1 hora)
+  useEffect(() => {
+    if (!user) return;
+
+    let timeout;
+    const resetTimer = () => {
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        logout();
+        alert("Sua sessão expirou por inatividade.");
+      }, 60 * 60 * 1000); // 1 hora
+    };
+
+    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
+    events.forEach(event => window.addEventListener(event, resetTimer));
+    resetTimer();
+
+    return () => {
+      if (timeout) clearTimeout(timeout);
+      events.forEach(event => window.removeEventListener(event, resetTimer));
+    };
+  }, [user]);
 
   // Login
   const login = useCallback(async (email, password) => {
@@ -54,9 +77,9 @@ export function AuthProvider({ children }) {
         body: JSON.stringify({ email, password }),
       });
 
-      localStorage.setItem('greenstore_token', response.accessToken);
-      localStorage.setItem('greenstore_refresh_token', response.refreshToken);
-      localStorage.setItem('greenstore_user', JSON.stringify(response.user));
+      sessionStorage.setItem('greenstore_token', response.accessToken);
+      sessionStorage.setItem('greenstore_refresh_token', response.refreshToken);
+      sessionStorage.setItem('greenstore_user', JSON.stringify(response.user));
       setUser(response.user);
       navigate('/caixa');
       return response;
@@ -75,18 +98,18 @@ export function AuthProvider({ children }) {
     } catch (err) {
       console.error('Erro ao fazer logout:', err);
     } finally {
-      localStorage.removeItem('greenstore_token');
-      localStorage.removeItem('greenstore_refresh_token');
-      localStorage.removeItem('greenstore_user');
+      sessionStorage.removeItem('greenstore_token');
+      sessionStorage.removeItem('greenstore_refresh_token');
+      sessionStorage.removeItem('greenstore_user');
       setUser(null);
-      navigate('/');
+      window.location.href = '/';
     }
-  }, [navigate]);
+  }, []);
 
   // Renovar token
   const refreshToken = useCallback(async () => {
     try {
-      const refreshTokenValue = localStorage.getItem('greenstore_refresh_token');
+      const refreshTokenValue = sessionStorage.getItem('greenstore_refresh_token');
       if (!refreshTokenValue) {
         throw new Error('No refresh token available');
       }
@@ -96,9 +119,9 @@ export function AuthProvider({ children }) {
         body: JSON.stringify({ refreshToken: refreshTokenValue }),
       });
 
-      localStorage.setItem('greenstore_token', response.accessToken);
+      sessionStorage.setItem('greenstore_token', response.accessToken);
       if (response.refreshToken) {
-        localStorage.setItem('greenstore_refresh_token', response.refreshToken);
+        sessionStorage.setItem('greenstore_refresh_token', response.refreshToken);
       }
 
       return response.accessToken;
