@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { PageShell } from "../components/PageShell";
 import { apiFetch } from "../lib/api";
+import { hasRequiredRole } from "../lib/auth";
 import "./Estoque.css";
 
 export function Estoque() {
@@ -167,12 +168,14 @@ export function Estoque() {
       title="Controle de Estoque"
       subtitle="Monitoramento, reposição e movimentações de estoque"
       actions={
-        <button
-          className="button"
-          onClick={() => setShowNewProductModal(true)}
-        >
-          Novo Produto
-        </button>
+        hasRequiredRole("supervisor") && (
+          <button
+            className="button"
+            onClick={() => setShowNewProductModal(true)}
+          >
+            Novo Produto
+          </button>
+        )
       }
     >
       <div className="stock-container">
@@ -274,15 +277,17 @@ export function Estoque() {
                               </span>
                             </td>
                             <td>
-                              <button
-                                className="btn-action"
-                                onClick={() => {
-                                  setSelectedProduct(product);
-                                  setShowMovementModal(true);
-                                }}
-                              >
-                                Movimentar
-                              </button>
+                              {hasRequiredRole("supervisor") && (
+                                <button
+                                  className="btn-action"
+                                  onClick={() => {
+                                    setSelectedProduct(product);
+                                    setShowMovementModal(true);
+                                  }}
+                                >
+                                  Movimentar
+                                </button>
+                              )}
                             </td>
                           </tr>
                         );
@@ -323,15 +328,17 @@ export function Estoque() {
                         <td>{item.min_stock}</td>
                         <td>{item.restock_quantity || "Consultar"}</td>
                         <td>
-                          <button
-                            className="btn-action"
-                            onClick={() => {
-                              setSelectedProduct(item);
-                              setShowMovementModal(true);
-                            }}
-                          >
-                            Repor
-                          </button>
+                          {hasRequiredRole("supervisor") && (
+                            <button
+                              className="btn-action"
+                              onClick={() => {
+                                setSelectedProduct(item);
+                                setShowMovementModal(true);
+                              }}
+                            >
+                              Repor
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}

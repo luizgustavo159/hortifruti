@@ -3,20 +3,20 @@ import { apiFetch } from "../lib/api";
 import { clearToken, clearUser, getAuthUser, hasRequiredRole } from "../lib/auth";
 
 const navItems = [
-  { to: "/caixa", label: "Caixa" },
-  { to: "/estoque", label: "Estoque" },
-  { to: "/descontos", label: "Descontos" },
-  { to: "/admin", label: "Dashboard Admin" },
-  { to: "/admin/advanced", label: "Dashboard Avançado" },
-  { to: "/admin/funcionarios", label: "Funcionários" },
-  { to: "/admin/logs", label: "Logs" },
-  { to: "/admin/configuracao", label: "Configurações" },
+  { to: "/caixa", label: "Caixa", minRole: "operator" },
+  { to: "/estoque", label: "Estoque", minRole: "operator" },
+  { to: "/descontos", label: "Descontos", minRole: "manager" },
+  { to: "/admin", label: "Dashboard Admin", minRole: "manager" },
+  { to: "/admin/advanced", label: "Dashboard Avançado", minRole: "manager" },
+  { to: "/admin/funcionarios", label: "Funcionários", minRole: "admin" },
+  { to: "/admin/logs", label: "Logs", minRole: "manager" },
+  { to: "/admin/configuracao", label: "Configurações", minRole: "admin" },
 ];
 
 export function Sidebar() {
   const navigate = useNavigate();
-  const user = getAuthUser() || { name: "Admin Demo", role: "admin" };
-  const items = navItems;
+  const user = getAuthUser();
+  const items = navItems.filter(item => hasRequiredRole(item.minRole));
 
   const logout = async () => {
     try {
