@@ -6,7 +6,7 @@ const LOG_LEVEL = process.env.LOG_LEVEL || "info";
 const ADMIN_BOOTSTRAP_TOKEN = process.env.ADMIN_BOOTSTRAP_TOKEN || "";
 const PASSWORD_RESET_TTL_MINUTES = Number(process.env.PASSWORD_RESET_TTL_MINUTES || 30);
 const ALERT_SLOW_THRESHOLD_MS = Number(process.env.ALERT_SLOW_THRESHOLD_MS || 2000);
-const METRICS_ENABLED = process.env.METRICS_ENABLED !== "false";
+const METRICS_ENABLED = process.env.METRICS_ENABLED === "true";
 const PASSWORD_RESET_URL = process.env.PASSWORD_RESET_URL || "";
 const RESET_EMAIL_FROM = process.env.RESET_EMAIL_FROM || "";
 const SMTP_HOST = process.env.SMTP_HOST || "";

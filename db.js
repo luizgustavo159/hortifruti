@@ -33,6 +33,7 @@ const buildPool = () => {
 };
 
 const pool = buildPool();
+global.dbPool = pool;
 
 const formatQuery = (sql) => {
   let index = 0;

@@ -20,13 +20,21 @@ export function AuthProvider({ children }) {
           return;
         }
 
-        // Verificar se token ainda é válido
+        // Tentar recuperar usuário do localStorage primeiro para renderização rápida
+        const savedUser = localStorage.getItem('user');
+        if (savedUser) {
+          setUser(JSON.parse(savedUser));
+        }
+
+        // Verificar se token ainda é válido em segundo plano
         const response = await apiFetch('/auth/me');
         setUser(response);
+        localStorage.setItem('user', JSON.stringify(response));
       } catch (err) {
-        // Token inválido, limpar
+        console.error('Erro na verificação de autenticação:', err);
         localStorage.removeItem('accessToken');
         localStorage.removeItem('refreshToken');
+        localStorage.removeItem('user');
         setUser(null);
       } finally {
         setLoading(false);
@@ -48,6 +56,7 @@ export function AuthProvider({ children }) {
 
       localStorage.setItem('accessToken', response.accessToken);
       localStorage.setItem('refreshToken', response.refreshToken);
+      localStorage.setItem('user', JSON.stringify(response.user));
       setUser(response.user);
       navigate('/caixa');
       return response;
@@ -68,8 +77,9 @@ export function AuthProvider({ children }) {
     } finally {
       localStorage.removeItem('accessToken');
       localStorage.removeItem('refreshToken');
+      localStorage.removeItem('user');
       setUser(null);
-      navigate('/login');
+      navigate('/');
     }
   }, [navigate]);
 
