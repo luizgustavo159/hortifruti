@@ -32,16 +32,31 @@ export function CaixaFocusMode() {
 
   const loadData = async () => {
     try {
-      const [productsData, discountsData] = await Promise.all([
-        apiFetch('/products'),
-        apiFetch('/discounts'),
-      ]);
-      setProducts(Array.isArray(productsData) ? productsData : []);
-      setDiscounts(Array.isArray(discountsData) ? discountsData : []);
+      const promises = [apiFetch('/products')];
+      
+      const user = JSON.parse(sessionStorage.getItem('greenstore_user') || '{}');
+      const canSeeDiscounts = ['manager', 'admin'].includes(user.role);
+      
+      if (canSeeDiscounts) {
+        promises.push(apiFetch('/discounts'));
+      }
+
+      const results = await Promise.allSettled(promises);
+      
+      if (results[0].status === 'fulfilled') {
+        setProducts(Array.isArray(results[0].value) ? results[0].value : []);
+      } else {
+        throw new Error(results[0].reason?.message || 'Falha ao carregar produtos');
+      }
+
+      if (canSeeDiscounts && results[1]?.status === 'fulfilled') {
+        setDiscounts(Array.isArray(results[1].value) ? results[1].value : []);
+      }
+      
       setError('');
     } catch (err) {
       console.error('Erro ao carregar dados:', err);
-      setError('Erro ao carregar dados do sistema');
+      setError('Erro ao carregar dados do sistema: ' + err.message);
       setProducts([]);
       setDiscounts([]);
     } finally {

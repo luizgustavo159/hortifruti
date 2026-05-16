@@ -150,12 +150,12 @@ export function AdminDashboard() {
                     <tbody>
                       {reports.by_operator.map((op, idx) => {
                         const avgTicket =
-                          op.quantity > 0 ? op.total / op.quantity : 0;
+                          op.total_items > 0 ? op.total_sales / op.total_items : 0;
                         return (
                           <tr key={idx}>
-                            <td>{op.operator_name || "Desconhecido"}</td>
-                            <td>R$ {Number(op.total).toFixed(2)}</td>
-                            <td>{op.quantity}</td>
+                            <td>{op.name || "Desconhecido"}</td>
+                            <td>R$ {Number(op.total_sales).toFixed(2)}</td>
+                            <td>{op.total_items}</td>
                             <td>R$ {avgTicket.toFixed(2)}</td>
                           </tr>
                         );
@@ -186,13 +186,13 @@ export function AdminDashboard() {
                       {reports.by_category.map((cat, idx) => {
                         const percentage =
                           totalSales > 0
-                            ? ((Number(cat.total) / totalSales) * 100).toFixed(1)
+                            ? ((Number(cat.total_sales) / totalSales) * 100).toFixed(1)
                             : 0;
                         return (
                           <tr key={idx}>
-                            <td>{cat.category_name || "Sem categoria"}</td>
-                            <td>{cat.quantity}</td>
-                            <td>R$ {Number(cat.total).toFixed(2)}</td>
+                            <td>{cat.category || "Sem categoria"}</td>
+                            <td>{cat.total_items}</td>
+                            <td>R$ {Number(cat.total_sales).toFixed(2)}</td>
                             <td>
                               <div className="percentage-bar">
                                 <div

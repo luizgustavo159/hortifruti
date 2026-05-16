@@ -17,6 +17,9 @@ export function Estoque() {
   const [showMovementModal, setShowMovementModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [showApprovalModal, setShowApprovalModal] = useState(false);
+  const [approvalData, setApprovalData] = useState({ email: "", password: "" });
+  const [pendingAction, setPendingAction] = useState(null);
 
   // Formulário para novo produto
   const [newProduct, setNewProduct] = useState({
@@ -118,9 +121,16 @@ export function Estoque() {
   };
 
   // Registrar movimentação de estoque
-  const handleStockMovement = async () => {
+  const handleStockMovement = async (approvalToken = null) => {
     if (!selectedProduct || !movement.quantity || !movement.reason) {
       setError("Preencha todos os campos da movimentação.");
+      return;
+    }
+
+    // Se for operador, precisa de aprovação
+    if (!hasRequiredRole("supervisor") && !approvalToken) {
+      setPendingAction(() => () => handleStockMovement());
+      setShowApprovalModal(true);
       return;
     }
 
@@ -138,8 +148,11 @@ export function Estoque() {
         reason: movement.reason,
       };
 
+      const headers = approvalToken ? { "x-approval-token": approvalToken } : {};
+
       await apiFetch(endpoint, {
         method: "POST",
+        headers,
         body: JSON.stringify(movementData),
       });
 
@@ -147,6 +160,8 @@ export function Estoque() {
       setMovement({ type: "adjust", quantity: "", reason: "" });
       setSelectedProduct(null);
       setShowMovementModal(false);
+      setShowApprovalModal(false);
+      setApprovalData({ email: "", password: "" });
 
       // Recarregar produtos
       const productsData = await apiFetch("/products");
@@ -155,6 +170,32 @@ export function Estoque() {
       setTimeout(() => setSuccessMessage(""), 3000);
     } catch (movementError) {
       setError(movementError.message || "Erro ao registrar movimentação.");
+    }
+  };
+
+  const handleRequestApproval = async () => {
+    if (!approvalData.email || !approvalData.password) {
+      setError("Informe as credenciais do superior.");
+      return;
+    }
+
+    try {
+      const actionType = movement.type === "loss" ? "stock_loss" : "stock_adjust";
+      const response = await apiFetch("/approvals", {
+        method: "POST",
+        body: JSON.stringify({
+          email: approvalData.email,
+          password: approvalData.password,
+          action: actionType,
+          reason: movement.reason
+        })
+      });
+
+      if (response.token) {
+        handleStockMovement(response.token);
+      }
+    } catch (err) {
+      setError(err.message || "Falha na aprovação.");
     }
   };
 
@@ -277,17 +318,15 @@ export function Estoque() {
                               </span>
                             </td>
                             <td>
-                              {hasRequiredRole("supervisor") && (
-                                <button
-                                  className="btn-action"
-                                  onClick={() => {
-                                    setSelectedProduct(product);
-                                    setShowMovementModal(true);
-                                  }}
-                                >
-                                  Movimentar
-                                </button>
-                              )}
+                              <button
+                                className="btn-action"
+                                onClick={() => {
+                                  setSelectedProduct(product);
+                                  setShowMovementModal(true);
+                                }}
+                              >
+                                Movimentar
+                              </button>
                             </td>
                           </tr>
                         );
@@ -328,17 +367,15 @@ export function Estoque() {
                         <td>{item.min_stock}</td>
                         <td>{item.restock_quantity || "Consultar"}</td>
                         <td>
-                          {hasRequiredRole("supervisor") && (
-                            <button
-                              className="btn-action"
-                              onClick={() => {
-                                setSelectedProduct(item);
-                                setShowMovementModal(true);
-                              }}
-                            >
-                              Repor
-                            </button>
-                          )}
+                          <button
+                            className="btn-action"
+                            onClick={() => {
+                              setSelectedProduct(item);
+                              setShowMovementModal(true);
+                            }}
+                          >
+                            Repor
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -360,6 +397,41 @@ export function Estoque() {
           </div>
         )}
       </div>
+
+      {/* Modal: Aprovação por Superior */}
+      {showApprovalModal && (
+        <div className="modal-overlay" onClick={() => setShowApprovalModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Aprovação Necessária</h2>
+            <p className="modal-subtitle">Solicite a um Supervisor ou Gerente para autorizar esta ação.</p>
+            
+            <div className="form-group">
+              <label>Email do Superior</label>
+              <input
+                type="email"
+                value={approvalData.email}
+                onChange={(e) => setApprovalData({ ...approvalData, email: e.target.value })}
+                placeholder="email@superior.com"
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Senha do Superior</label>
+              <input
+                type="password"
+                value={approvalData.password}
+                onChange={(e) => setApprovalData({ ...approvalData, password: e.target.value })}
+                placeholder="••••••••"
+              />
+            </div>
+
+            <div className="modal-actions">
+              <button className="btn-secondary" onClick={() => setShowApprovalModal(false)}>Cancelar</button>
+              <button className="btn-primary" onClick={handleRequestApproval}>Autorizar Ação</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal: Novo Produto */}
       {showNewProductModal && (
