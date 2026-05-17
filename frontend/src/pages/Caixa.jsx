@@ -284,7 +284,10 @@ export function Caixa() {
                   placeholder="Ex: Fundo de caixa inicial"
                 />
               </div>
-              <button type="submit" className="btn-finalize" style={{ width: '100%' }}>
+                              <button type="button" className="button button-secondary" onClick={() => setShowAberturaModal(false)}>
+                  Cancelar
+                </button>
+                <button type="submit" className="btn-finalize" style={{ width: '100%' }}>
                 Solicitar Abertura
               </button>
             </form>
@@ -306,14 +309,29 @@ export function Caixa() {
       <div className="pos-container">
         {/* Seção de Produtos */}
         <div className="pos-products">
-          <div className="search-section">
+                    <div className="search-section" style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
             <input
               type="text"
               placeholder="Buscar produtos..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="search-input"
+              style={{ flex: 1 }}
             />
+            {!caixaAberto && (
+              <button 
+                className="button button-primary" 
+                onClick={() => setShowAberturaModal(true)}
+                style={{ whiteSpace: 'nowrap', backgroundColor: '#10b981' }}
+              >
+                🔓 Abrir Caixa
+              </button>
+            )}
+            {caixaAberto && (
+              <span style={{ color: '#10b981', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                🟢 Caixa Aberto
+              </span>
+            )}
           </div>
 
           {loading && <p className="loading">Carregando produtos...</p>}
