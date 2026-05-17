@@ -17,6 +17,7 @@ import { AdminPoliticas } from "./pages/AdminPoliticas";
 import { AdminRelatorios } from "./pages/AdminRelatorios";
 import { AdminFuncionarios } from "./pages/AdminFuncionarios";
 import { AdminConfiguracao } from "./pages/AdminConfiguracao";
+import { AIAssistant } from "./pages/AIAssistant";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { Toaster } from "sonner";
 
@@ -130,7 +131,8 @@ function AppRoutes() {
           }
         />
         <Route
-          path="/admin/configuracao"
+          path="/admin/ai-assistant" element={<ProtectedRoute requiredRole="admin"><AIAssistant /></ProtectedRoute>} />
+        <Route path="/admin/configuracao"
           element={
             <ProtectedRoute requiredRole="admin">
               <AdminConfiguracao />
