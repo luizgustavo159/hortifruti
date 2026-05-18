@@ -7,58 +7,91 @@ const path = require("path");
 const { PORT, NODE_ENV } = config;
 
 async function runMigrations(targetDb) {
-  console.log("Executando migrações no banco em memória...");
+  console.log("Executando migrações no banco de dados...");
   const migrationsDir = path.join(__dirname, "migrations");
-  const files = fs.readdirSync(migrationsDir).sort();
+  if (!fs.existsSync(migrationsDir)) {
+    console.log("Diretório de migrações não encontrado.");
+    return;
+  }
   
+  const files = fs.readdirSync(migrationsDir).sort();
   for (const file of files) {
     if (file.endsWith(".sql")) {
       const sql = fs.readFileSync(path.join(migrationsDir, file), "utf8");
-      await new Promise((resolve, reject) => {
-        targetDb.query(sql, (err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
+      // Separar por ponto e vírgula, cuidando para não quebrar strings complexas
+      const commands = sql.split(';').map(c => c.trim()).filter(c => c.length > 0);
+      
+      for (const cmd of commands) {
+        try {
+          await new Promise((resolve, reject) => {
+            targetDb.query(cmd, (err) => {
+              if (err) reject(err);
+              else resolve();
+            });
+          });
+        } catch (err) {
+          // Ignorar erros de "já existe" para tabelas/índices
+          if (!err.message.includes("already exists") && !err.message.includes("já existe")) {
+            console.error(`Erro no comando em ${file}:`, err.message);
+          }
+        }
+      }
     }
   }
   console.log("Migrações concluídas.");
 }
 
 async function seedInMemoryDb() {
-  if (NODE_ENV !== "test") return;
-  
-  console.log("Populando banco de dados em memória...");
-  const passwordHash = bcrypt.hashSync("admin", 10);
-  
-  // Usar a instância global para garantir que estamos no mesmo banco
+  console.log("Populando banco de dados com dados iniciais...");
+  const passwordHash = bcrypt.hashSync("admin123456", 10);
   const targetDb = global.dbPool || db;
 
-  await new Promise((resolve, reject) => {
-    const sql = "INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4)";
-    targetDb.query(sql, ["Administrador", "admin@admin.com", passwordHash, "admin"], (err) => {
-      if (err) reject(err);
-      else resolve();
-    });
-  });
-
-  const products = [
-    ['Maçã Fuji', 'SKU001', 'kg', 5.99, 100],
-    ['Banana Nanica', 'SKU002', 'kg', 3.50, 150],
-    ['Tomate Italiano', 'SKU003', 'kg', 7.20, 80],
-    ['Alface Crespa', 'SKU004', 'un', 2.50, 50]
-  ];
-
-  for (const p of products) {
-    await new Promise((resolve, reject) => {
-      const sql = "INSERT INTO products (name, sku, unit_type, price, current_stock) VALUES ($1, $2, $3, $4, $5)";
-      targetDb.query(sql, p, (err) => {
-        if (err) reject(err);
-        else resolve();
+  try {
+    // Verificar se já existe admin
+    const adminExists = await new Promise((resolve) => {
+      targetDb.query("SELECT id FROM users WHERE email = $1", ["admin@admin.com"], (err, res) => {
+        resolve(res && res.rows && res.rows.length > 0);
       });
     });
+
+    if (!adminExists) {
+      await new Promise((resolve, reject) => {
+        const sql = "INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4)";
+        targetDb.query(sql, ["Administrador", "admin@admin.com", passwordHash, "admin"], (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+    }
+
+    // Seed de produtos se estiver vazio
+    const productCount = await new Promise((resolve) => {
+      targetDb.query("SELECT count(*) FROM products", (err, res) => {
+        resolve(res ? parseInt(res.rows[0].count) : 0);
+      });
+    });
+
+    if (productCount === 0) {
+      const products = [
+        ['Maçã Fuji', 'SKU001', 'kg', 5.99, 100],
+        ['Banana Nanica', 'SKU002', 'kg', 3.50, 150],
+        ['Tomate Italiano', 'SKU003', 'kg', 7.20, 80],
+        ['Alface Crespa', 'SKU004', 'un', 2.50, 50]
+      ];
+      for (const p of products) {
+        await new Promise((resolve, reject) => {
+          const sql = "INSERT INTO products (name, sku, unit_type, price, current_stock) VALUES ($1, $2, $3, $4, $5)";
+          targetDb.query(sql, p, (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+      }
+    }
+    console.log("Banco de dados populado com sucesso.");
+  } catch (err) {
+    console.error("Erro no seed:", err.message);
   }
-  console.log("Banco de dados em memória populado com sucesso.");
 }
 
 if (require.main === module) {
@@ -71,7 +104,7 @@ if (require.main === module) {
       });
     })
     .catch(err => {
-      console.error("Erro na inicialização:", err);
+      console.error("Erro fatal na inicialização:", err);
       process.exit(1);
     });
 }

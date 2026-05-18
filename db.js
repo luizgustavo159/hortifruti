@@ -10,14 +10,18 @@ if (!DATABASE_URL && NODE_ENV !== "development" && !useInMemoryDb) {
   throw new Error("DATABASE_URL não configurado. Defina a conexão com PostgreSQL.");
 }
 
+let memoryInstance = null;
 const buildPool = () => {
   if (useInMemoryDb) {
+    if (memoryInstance) return memoryInstance;
     const memoryDb = newDb({
       autoCreateForeignKeyIndices: true,
     });
     const { Pool: MemoryPool } = memoryDb.adapters.createPg();
-    return new MemoryPool();
+    memoryInstance = new MemoryPool();
+    return memoryInstance;
   }
+
   return new PgPool({
     connectionString: DATABASE_URL || "postgres://localhost:5432/greenstore",
     max: Number(process.env.DB_POOL_MAX || 10),
