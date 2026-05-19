@@ -50,12 +50,7 @@ app.use((req, res, next) => {
     if (METRICS_ENABLED) {
       db.run(
         "INSERT INTO request_metrics (method, path, status, duration_ms) VALUES (?, ?, ?, ?)",
-        [req.method, req.path, res.statusCode, Math.round(durationMs)],
-        (err) => {
-          if (err) {
-            logger.error({ err }, "Erro ao persistir métrica.");
-          }
-        }
+        [req.method, req.path, res.statusCode, Math.round(durationMs)]
       );
     }
     const isSlow = durationMs > ALERT_SLOW_THRESHOLD_MS;
@@ -71,7 +66,7 @@ app.use((req, res, next) => {
         request_id: req.requestId,
       };
       db.run(
-        "INSERT INTO alerts (level, message, context) VALUES (?, ?, ?::jsonb)",
+        "INSERT INTO alerts (level, message, context) VALUES (?, ?, ?)",
         [level, message, JSON.stringify(context)],
         (err) => {
           if (err) {

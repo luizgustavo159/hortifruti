@@ -288,6 +288,46 @@
   margin-bottom: 20px;
 }
 
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.card {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  text-align: center;
+}
+
+.card h3 {
+  font-size: 13px;
+  color: #6b7280;
+  margin: 0 0 8px;
+  font-weight: 500;
+}
+
+.card strong {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.loading {
+  text-align: center;
+  padding: 40px;
+  color: #6b7280;
+}
+
 @media (max-width: 768px) {
   .discounts-grid {
     grid-template-columns: 1fr;

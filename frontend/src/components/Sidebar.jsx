@@ -6,11 +6,11 @@ import { ThemeSwitcher } from "./ThemeSwitcher";
 const navItems = [
   { to: "/caixa", label: "Caixa PDV", minRole: "operator" },
   { to: "/estoque", label: "Estoque", minRole: "operator" },
-  { to: "/descontos", label: "Descontos", minRole: "manager" },
-  { to: "/admin", label: "Dashboard", minRole: "admin" },
-  { to: "/admin/relatorios", label: "Relatórios", minRole: "manager" },
+  { to: "/descontos", label: "Descontos", minRole: "supervisor" },
+  { to: "/admin", label: "Dashboard", minRole: "supervisor" },
+  { to: "/admin/relatorios", label: "Relatórios", minRole: "supervisor" },
   { to: "/admin/funcionarios", label: "Funcionários", minRole: "admin" },
-  { to: "/admin/logs", label: "Logs de Auditoria", minRole: "manager" },
+  { to: "/admin/logs", label: "Logs de Auditoria", minRole: "supervisor" },
   { to: "/admin/configuracao", label: "Configurações", minRole: "admin" },
 ];
 

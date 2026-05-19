@@ -42,9 +42,9 @@ export function Caixa() {
 
         const promises = [apiFetch("/products")];
         
-        // Apenas gerentes e acima podem ver descontos
+        // Supervisores e acima podem ver descontos
         const user = JSON.parse(sessionStorage.getItem('greenstore_user') || '{}');
-        const canSeeDiscounts = ['manager', 'admin'].includes(user.role);
+        const canSeeDiscounts = ['supervisor', 'manager', 'admin'].includes(user.role);
         
         if (canSeeDiscounts) {
           promises.push(apiFetch("/discounts"));

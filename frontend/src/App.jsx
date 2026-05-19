@@ -69,7 +69,7 @@ function AppRoutes() {
         <Route
           path="/descontos"
           element={
-            <ProtectedRoute requiredRole="manager">
+            <ProtectedRoute requiredRole="supervisor">
               <Descontos />
             </ProtectedRoute>
           }
@@ -77,7 +77,7 @@ function AppRoutes() {
         <Route
           path="/admin"
           element={
-            <ProtectedRoute requiredRole="admin">
+            <ProtectedRoute requiredRole="supervisor">
               <AdminDashboard />
             </ProtectedRoute>
           }
@@ -85,7 +85,7 @@ function AppRoutes() {
         <Route
           path="/admin/advanced"
           element={
-            <ProtectedRoute requiredRole="admin">
+            <ProtectedRoute requiredRole="supervisor">
               <DashboardAdvanced />
             </ProtectedRoute>
           }
@@ -93,7 +93,7 @@ function AppRoutes() {
         <Route
           path="/admin/logs"
           element={
-            <ProtectedRoute requiredRole="manager">
+            <ProtectedRoute requiredRole="supervisor">
               <AdminLogs />
             </ProtectedRoute>
           }
@@ -117,7 +117,7 @@ function AppRoutes() {
         <Route
           path="/admin/relatorios"
           element={
-            <ProtectedRoute requiredRole="admin">
+            <ProtectedRoute requiredRole="supervisor">
               <AdminRelatorios />
             </ProtectedRoute>
           }

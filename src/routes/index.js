@@ -163,11 +163,11 @@ const buildDateFilter = (field, range) => {
   const conditions = [];
   const params = [];
   if (range?.start) {
-    conditions.push(`date(${field}) >= date(?)`);
+    conditions.push(`${field}::date >= $${params.length + 1}::date`);
     params.push(range.start);
   }
   if (range?.end) {
-    conditions.push(`date(${field}) <= date(?)`);
+    conditions.push(`${field}::date <= $${params.length + 1}::date`);
     params.push(range.end);
   }
   return {
@@ -613,7 +613,7 @@ router.post(
   }
 );
 
-router.get("/api/suppliers", authenticateToken, requireManager, (req, res) => {
+router.get("/api/suppliers", authenticateToken, requireSupervisor, (req, res) => {
   db.all("SELECT * FROM suppliers ORDER BY name", [], (err, rows) => {
     if (err) {
       return res.status(500).json({ message: "Erro ao buscar fornecedores." });
@@ -625,7 +625,7 @@ router.get("/api/suppliers", authenticateToken, requireManager, (req, res) => {
 router.post(
   "/api/suppliers",
   authenticateToken,
-  requireManager,
+  requireSupervisor,
   [
     body("name").trim().notEmpty().withMessage("Nome é obrigatório."),
     body("email").optional().isEmail().withMessage("Email inválido."),
@@ -675,7 +675,7 @@ router.get("/api/products", authenticateToken, (req, res) => {
 router.post(
   "/api/products",
   authenticateToken,
-  requireManager,
+  requireSupervisor,
   [
     body("name").trim().notEmpty().withMessage("Nome é obrigatório."),
     body("sku").trim().notEmpty().withMessage("SKU é obrigatório."),
@@ -773,7 +773,7 @@ router.post(
                 return;
               }
               tx.run(
-                "INSERT INTO stock_losses (product_id, quantity, reason, performed_by) VALUES (?, ?, ?, ?)",
+                "INSERT INTO stock_losses (product_id, quantity, reason, reported_by) VALUES (?, ?, ?, ?)",
                 [product_id, quantity, reason, req.user.id],
                 (lossErr) => {
                   if (lossErr) {
@@ -981,11 +981,11 @@ router.get("/api/stock/movements", authenticateToken, (req, res) => {
     params.push(type);
   }
   if (start) {
-    filters.push("date(created_at) >= date(?)");
+    filters.push(`created_at::date >= $${params.length + 1}::date`);
     params.push(start);
   }
   if (end) {
-    filters.push("date(created_at) <= date(?)");
+    filters.push(`created_at::date <= $${params.length + 1}::date`);
     params.push(end);
   }
 
@@ -1057,7 +1057,7 @@ router.post(
           let processed = 0;
           items.forEach((item) => {
             tx.run(
-              "INSERT INTO purchase_order_items (purchase_order_id, product_id, quantity) VALUES (?, ?, ?)",
+              "INSERT INTO purchase_order_items (order_id, product_id, quantity) VALUES (?, ?, ?)",
               [orderId, item.product_id, item.quantity],
               (itemErr) => {
                 if (itemErr) {
@@ -1104,7 +1104,7 @@ router.get("/api/purchase-orders/:id/items", authenticateToken, requireManager, 
     `SELECT purchase_order_items.*, products.name AS product_name
      FROM purchase_order_items
      JOIN products ON products.id = purchase_order_items.product_id
-     WHERE purchase_order_items.purchase_order_id = ?`,
+     WHERE purchase_order_items.order_id = ?`,
     [orderId],
     (err, rows) => {
       if (err) {
@@ -1132,7 +1132,7 @@ router.post(
           return;
         }
         tx.all(
-          "SELECT * FROM purchase_order_items WHERE purchase_order_id = ?",
+          "SELECT * FROM purchase_order_items WHERE order_id = ?",
           [orderId],
           (itemsErr, items) => {
             if (itemsErr) {
@@ -1205,7 +1205,7 @@ router.get("/api/discounts", authenticateToken, requireManager, (req, res) => {
 router.post(
   "/api/discounts",
   authenticateToken,
-  requireManager,
+  requireSupervisor,
   [
     body("name").trim().notEmpty().withMessage("Nome é obrigatório."),
     body("type").isIn(["percent", "fixed", "buy_x_get_y", "fixed_bundle", "percentage", "bulk"]).withMessage("Tipo inválido."),
@@ -1244,20 +1244,20 @@ router.post(
         [
           payload.name,
           type,
-          payload.value,
-          payload.min_quantity || null,
-          payload.buy_quantity || null,
-          payload.get_quantity || null,
+          payload.value != null ? payload.value : 0,
+          payload.min_quantity != null ? Number(payload.min_quantity) : 0,
+          payload.buy_quantity != null ? Number(payload.buy_quantity) : 0,
+          payload.get_quantity != null ? Number(payload.get_quantity) : 0,
           payload.target_type || "all",
           payload.target_value || null,
-          Array.isArray(payload.days_of_week) ? JSON.stringify(payload.days_of_week) : payload.days_of_week,
+          Array.isArray(payload.days_of_week) ? JSON.stringify(payload.days_of_week) : (payload.days_of_week || null),
           payload.starts_at || null,
           payload.ends_at || null,
           payload.starts_time || null,
           payload.ends_time || null,
           payload.stacking_rule || "exclusive",
-          Array.isArray(payload.criteria) ? JSON.stringify(payload.criteria) : payload.criteria,
-          payload.priority || 0,
+          Array.isArray(payload.criteria) ? JSON.stringify(payload.criteria) : (payload.criteria || null),
+          payload.priority != null ? Number(payload.priority) : 0,
           payload.active !== false ? 1 : 0,
         ],
         (err, row) => {
@@ -1276,7 +1276,7 @@ router.post(
   }
 );
 
-router.delete("/api/discounts/:id", authenticateToken, requireManager, (req, res) => {
+router.delete("/api/discounts/:id", authenticateToken, requireSupervisor, (req, res) => {
   const id = Number(req.params.id);
   db.run("DELETE FROM discounts WHERE id = ?", [id], (err) => {
     if (err) {
@@ -1528,7 +1528,7 @@ router.post(
   }
 );
 
-router.get("/api/reports/summary", authenticateToken, (req, res) => {
+router.get("/api/reports/summary", authenticateToken, requireSupervisor, (req, res) => {
   const range = parseDateRange(req, res);
   if (!range) {
     return;
@@ -1592,26 +1592,49 @@ router.get("/api/reports/summary", authenticateToken, (req, res) => {
   );
 });
 
-router.get("/api/reports/sales", authenticateToken, requireManager, (req, res) => {
+router.get("/api/reports/sales", authenticateToken, requireSupervisor, (req, res) => {
   const range = parseDateRange(req, res);
   if (!range) return;
-  const filter = buildDateFilter("sales.created_at", range);
-  db.all(
-    `SELECT sales.id, sales.created_at, products.name as product, sales.quantity, sales.total, sales.final_total, users.name as operator
+  const { operator_id, category_id } = req.query;
+  const params = [];
+  const conditions = [];
+
+  if (range.start) {
+    conditions.push(`sales.created_at::date >= $${params.length + 1}::date`);
+    params.push(range.start);
+  }
+  if (range.end) {
+    conditions.push(`sales.created_at::date <= $${params.length + 1}::date`);
+    params.push(range.end);
+  }
+  if (operator_id) {
+    conditions.push(`sales.sold_by = $${params.length + 1}`);
+    params.push(Number(operator_id));
+  }
+  if (category_id) {
+    conditions.push(`products.category_id = $${params.length + 1}`);
+    params.push(Number(category_id));
+  }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  db.pool.query(
+    `SELECT sales.id, sales.created_at, products.name as product, categories.name as category, sales.quantity, sales.total, sales.final_total, users.name as operator
      FROM sales
      JOIN products ON products.id = sales.product_id
+     LEFT JOIN categories ON categories.id = products.category_id
      JOIN users ON users.id = sales.sold_by
-     ${filter.clause}
+     ${whereClause}
      ORDER BY sales.created_at DESC`,
-    filter.params,
-    (err, rows) => {
+    params,
+    (err, result) => {
       if (err) return res.status(500).json({ message: "Erro ao gerar relatório." });
-      return res.json(rows);
+      return res.json(result.rows || []);
     }
   );
 });
 
-router.get("/api/reports/cash-flow", authenticateToken, requireManager, (req, res) => {
+router.get("/api/reports/cash-flow", authenticateToken, requireSupervisor, (req, res) => {
   const range = parseDateRange(req, res);
   if (!range) return;
   const filter = buildDateFilter("occurred_at", range);
@@ -1628,7 +1651,7 @@ router.get("/api/reports/cash-flow", authenticateToken, requireManager, (req, re
   );
 });
 
-router.get("/api/reports/payables", authenticateToken, requireManager, (req, res) => {
+router.get("/api/reports/payables", authenticateToken, requireSupervisor, (req, res) => {
   db.all(
     `SELECT id, partner_name, description, amount, due_date, status
      FROM finance_accounts
@@ -1642,7 +1665,7 @@ router.get("/api/reports/payables", authenticateToken, requireManager, (req, res
   );
 });
 
-router.get("/api/reports/receivables", authenticateToken, requireManager, (req, res) => {
+router.get("/api/reports/receivables", authenticateToken, requireSupervisor, (req, res) => {
   db.all(
     `SELECT id, partner_name, description, amount, due_date, status
      FROM finance_accounts
@@ -1656,7 +1679,7 @@ router.get("/api/reports/receivables", authenticateToken, requireManager, (req, 
   );
 });
 
-router.get("/api/reports/inventory", authenticateToken, requireManager, (req, res) => {
+router.get("/api/reports/inventory", authenticateToken, requireSupervisor, (req, res) => {
   db.all(
     `SELECT products.name, categories.name as category, products.current_stock, products.unit_type, products.price, (products.current_stock * products.price) as inventory_value
      FROM products
@@ -1676,11 +1699,11 @@ const auditLogsHandler = (req, res) => {
   const filters = [];
 
   if (start) {
-    filters.push("audit_logs.created_at >= ?");
+    filters.push(`audit_logs.created_at >= $${params.length + 1}`);
     params.push(`${start}T00:00:00.000Z`);
   }
   if (end) {
-    filters.push("audit_logs.created_at <= ?");
+    filters.push(`audit_logs.created_at <= $${params.length + 1}`);
     params.push(`${end}T23:59:59.999Z`);
   }
 
@@ -1799,7 +1822,7 @@ router.get("/api/finance/daily-close", authenticateToken, requireSupervisor, (re
   db.get(
     `SELECT COALESCE(SUM(final_total), 0) AS sales_total
      FROM sales
-     WHERE CAST(created_at AS DATE) = CAST(? AS DATE) AND cancelled_at IS NULL`,
+     WHERE created_at::date = $1::date AND cancelled_at IS NULL`,
     [date],
     (salesErr, salesRow) => {
       if (salesErr) {
@@ -1809,7 +1832,7 @@ router.get("/api/finance/daily-close", authenticateToken, requireSupervisor, (re
         `SELECT COALESCE(SUM(products.price * stock_losses.quantity), 0) AS losses_total
          FROM stock_losses
          JOIN products ON products.id = stock_losses.product_id
-         WHERE CAST(stock_losses.created_at AS DATE) = CAST(? AS DATE)`,
+         WHERE stock_losses.created_at::date = $1::date`,
         [date],
         (lossErr, lossRow) => {
           if (lossErr) {
@@ -1818,7 +1841,7 @@ router.get("/api/finance/daily-close", authenticateToken, requireSupervisor, (re
           db.get(
             `SELECT COALESCE(SUM(CASE WHEN type = 'in' THEN amount ELSE -amount END), 0) AS finance_net
              FROM finance_transactions
-             WHERE CAST(occurred_at AS DATE) = CAST(? AS DATE)`,
+             WHERE occurred_at::date = $1::date`,
             [date],
             (financeErr, financeRow) => {
               if (financeErr) {
@@ -1827,7 +1850,7 @@ router.get("/api/finance/daily-close", authenticateToken, requireSupervisor, (re
               db.get(
                 `SELECT COALESCE(SUM(CASE WHEN type = 'supply' THEN amount ELSE -amount END), 0) AS cash_adjustments_net
                  FROM cash_movements
-                 WHERE CAST(created_at AS DATE) = CAST(? AS DATE)`,
+                 WHERE created_at::date = $1::date`,
                 [date],
                 (cashErr, cashRow) => {
                   if (cashErr) {
@@ -1979,7 +2002,7 @@ router.post("/api/finance/accounts/:id/settle", authenticateToken, requireSuperv
   });
 });
 
-router.get("/api/reports/by-operator", authenticateToken, requireManager, (req, res) => {
+router.get("/api/reports/by-operator", authenticateToken, requireSupervisor, (req, res) => {
   const range = parseDateRange(req, res);
   if (!range) {
     return;
@@ -2002,7 +2025,7 @@ router.get("/api/reports/by-operator", authenticateToken, requireManager, (req, 
   );
 });
 
-router.get("/api/reports/by-category", authenticateToken, requireManager, (req, res) => {
+router.get("/api/reports/by-category", authenticateToken, requireSupervisor, (req, res) => {
   const range = parseDateRange(req, res);
   if (!range) {
     return;
@@ -2571,7 +2594,7 @@ router.post(
   }
 );
 
-router.get("/api/users", authenticateToken, requireAdmin, (req, res) => {
+router.get("/api/users", authenticateToken, requireSupervisor, (req, res) => {
   const role = req.query.role || null;
   const sql = role 
     ? "SELECT id, name, email, phone, role, is_active, permissions, created_at FROM users WHERE role = ?"
@@ -2737,15 +2760,16 @@ router.put("/api/settings", authenticateToken, requireAdmin, (req, res) => {
   if (!entries.length) {
     return res.status(400).json({ message: "Nenhuma configuração enviada." });
   }
-  db.serialize(() => {
-    entries.forEach(([key, value]) => {
-      db.run(
-        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
-        [key, String(value)]
-      );
-    });
-  });
-  return res.json({ updated: entries.length });
+  const promises = entries.map(([key, value]) => new Promise((resolve, reject) => {
+    db.run(
+      "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
+      [key, String(value)],
+      (err) => { if (err) reject(err); else resolve(); }
+    );
+  }));
+  Promise.all(promises)
+    .then(() => res.json({ updated: entries.length }))
+    .catch(() => res.status(500).json({ message: "Erro ao salvar configurações." }));
 });
 
 router.delete("/api/users/:id", authenticateToken, requireAdmin, (req, res) => {
